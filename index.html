@@ -1327,21 +1327,25 @@ async function getRealElevation(c) {
 }
 
 async function getRealAirQualityOAQ(c) {
+  // v2 API: 키 불필요, CORS 허용
   try {
-    const url = `https://api.openaq.org/v3/locations?coordinates=${c.lat},${c.lng}&radius=30000&limit=10&parameters_id=2`;
-    const res = await fetch(url, {headers:{'X-API-Key':''}});
+    const url = `https://api.openaq.org/v2/locations?coordinates=${c.lat},${c.lng}&radius=30000&limit=10&parameter=pm25&order_by=distance`;
+    const res = await fetch(url);
     const data = await res.json();
     if(data.results && data.results.length > 0) {
-      const loc = data.results[0];
-      const pm25Param = loc.sensors ? loc.sensors.find(s=>s.parameter && s.parameter.name==='pm25') : null;
-      if(pm25Param && pm25Param.summary && pm25Param.summary.avg) {
-        const pm25 = Math.round(pm25Param.summary.avg);
-        const pm25g = pm25<15?'좋음':pm25<35?'보통':pm25<75?'나쁨':'매우나쁨';
-        return { pm25, pm10:Math.round(pm25*1.6), pm25g, station: loc.name||'인근 측정소',
-          source:`실제 (OpenAQ · ${loc.name||'인근 측정소'})`, reliability:'real' };
+      for(const loc of data.results){
+        const pm25Param = loc.parameters ? loc.parameters.find(p=>p.parameter==='pm25'||p.parameterId===2) : null;
+        if(pm25Param && pm25Param.lastValue != null){
+          const pm25 = Math.round(Math.abs(pm25Param.lastValue));
+          if(pm25 > 0 && pm25 < 500){
+            const pm25g = pm25<15?'좋음':pm25<35?'보통':pm25<75?'나쁨':'매우나쁨';
+            return { pm25, pm10:Math.round(pm25*1.6), pm25g, station: loc.name||'인근 측정소',
+              source:`실제 (OpenAQ v2 · ${loc.name||'인근 측정소'})`, reliability:'real' };
+          }
+        }
       }
     }
-  } catch(e) { console.warn('OpenAQ error:', e); }
+  } catch(e) { console.warn('OpenAQ v2 error:', e); }
   return null;
 }
 
@@ -3605,7 +3609,7 @@ async function testApi(type){
   else if(type==='openaq'){
     setStatus('test-openaq-status','<div>⏳ 테스트 중…</div>','#78909c');
     try{
-      const r=await fetch('https://api.openaq.org/v3/locations?coordinates=37.5665,126.9780&radius=20000&limit=3&parameters_id=2');
+      const r=await fetch('https://api.openaq.org/v2/locations?coordinates=37.5665,126.9780&radius=20000&limit=3&parameter=pm25&order_by=distance');
       const d=await r.json();
       const cnt=d.results?d.results.length:0;
       setStatus('test-openaq-status',`<div style="color:#81c784">✅ 측정소 ${cnt}개 발견</div><button onclick="testApi('openaq')" style="margin-top:4px;background:#1e3a4f;border:none;border-radius:4px;padding:2px 8px;color:#90a4ae;font-size:10px;cursor:pointer;">재테스트</button>`,'#81c784');
@@ -3682,7 +3686,7 @@ async function testApi(type){
     document.getElementById('status-vworld').textContent='⏳ 연결 테스트 중…';document.getElementById('status-vworld').className='api-status idle';
     try{
       const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key=${key}&format=json&geomFilter=POINT(126.9780%2037.5665)&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
-      const r=await fetch(url);const d=await r.json();
+      const d=await vworldJsonp(url);
       if(d.response&&d.response.status==='OK'){
         const zone=d.response.result?.featureCollection?.features?.[0]?.properties?.UQ111_UQ111NM||'확인됨';
         document.getElementById('status-vworld').textContent=`✅ 연결 성공 — 용도지역: ${zone}`;
@@ -3739,9 +3743,9 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
+    // JSONP로 CORS 우회 (GitHub Pages 포함 모든 도메인에서 동작)
     const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key=${KEYS.vworld}&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
-    const r=await fetch(url);
-    const d=await r.json();
+    const d=await vworldJsonp(url);
     if(d.response&&d.response.status==='OK'&&d.response.result&&d.response.result.featureCollection){
       const features=d.response.result.featureCollection.features;
       if(features&&features.length>0){
