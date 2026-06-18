@@ -442,6 +442,8 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         <label class="layer-item"><input type="checkbox" id="l-egis-eco" onchange="toggleEgisEco()"> 🌿 생태자연도 (환경부)</label>
         <label class="layer-item"><input type="checkbox" id="l-forest" onchange="toggleForest()"> 🌲 임상도 (산림청)</label>
         <label class="layer-item"><input type="checkbox" id="l-landcover" onchange="toggleLandcover()"> 🏞️ 토지피복도 (환경부)</label>
+        <label class="layer-item"><input type="checkbox" id="l-ecvam" onchange="toggleEcvam()"> 🗺️ 환경성평가도 (국토부)</label>
+        <label class="layer-item"><input type="checkbox" id="l-ecozone" onchange="toggleEcozone()"> 🦋 생태보전지역 (환경부)</label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">베이스맵</div>
         <label class="layer-item"><input type="radio" name="bm" value="osm" checked onchange="changeBM('osm')"> 지도</label>
@@ -567,6 +569,30 @@ function toggleLandcover(){
     }).addTo(map);
     showWMSToast('🏞️ 토지피복도 (환경부 EGIS)');
   }else if(landcoverLayer){map.removeLayer(landcoverLayer);landcoverLayer=null;}
+}
+
+let ecvamWmsLayer=null, ecozoneWmsLayer=null;
+function toggleEcvam(){
+  if(document.getElementById('l-ecvam').checked){
+    ecvamWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
+      layers:'lt_c_enveval_res',format:'image/png',transparent:true,
+      opacity:0.65,attribution:'© 국토환경성평가지도',
+      APIKEY:ECVAM_KEY,DOMAIN:ECVAM_DOMAIN,
+      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }).addTo(map);
+    showWMSToast('🗺️ 환경성평가도 (국토부)');
+  }else if(ecvamWmsLayer){map.removeLayer(ecvamWmsLayer);ecvamWmsLayer=null;}
+}
+function toggleEcozone(){
+  if(document.getElementById('l-ecozone').checked){
+    ecozoneWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
+      layers:'lt_c_ecscnsrvatn',format:'image/png',transparent:true,
+      opacity:0.6,attribution:'© 환경부 생태보전지역',
+      APIKEY:ECVAM_KEY,DOMAIN:ECVAM_DOMAIN,
+      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }).addTo(map);
+    showWMSToast('🦋 생태보전지역 (환경부)');
+  }else if(ecozoneWmsLayer){map.removeLayer(ecozoneWmsLayer);ecozoneWmsLayer=null;}
 }
 
 function showWMSToast(name){
@@ -942,6 +968,24 @@ async function _doAnalysis(address, coords){
     document.getElementById('loadingStep').textContent=STEPS[7];
     const water = buildWater(coords, osm, elev);
     const landscape = buildLandscape(coords, osm);
+
+    // ── 환경부 토지피복도 실데이터 (Cloudflare Worker 경유) ──
+    const mceeLC = await fetchMceeLC(coords.lat, coords.lng);
+    if(mceeLC){
+      landscape.landCoverReal = mceeLC;
+      landscape.lcRealName = mceeLC.lnlc_nm;
+      landscape.lcHansen = mceeLC.hansen;
+      landscape.source = `실제 (환경부 토지피복도 ${mceeLC._src})`;
+      landscape.reliability = 'real';
+      dataLog.push({category:'토지피복',icon:'🌿',api:'환경부 토지피복도 (MCEE · Cloudflare Worker)',
+        url:WORKER_URL,note:'환경부 EGIS 토지피복도 3단계 분류 (lv3_2025y) — GetFeatureInfo 포인트 조회 (Worker CORS 우회)',
+        values:`토지피복: ${mceeLC.lnlc_nm} / Hansen 식생형: ${mceeLC.hansen||'—'}`,
+        status:'real',verifyUrl:'https://egis.me.go.kr/',verifyLabel:'환경부 EGIS 확인'});
+    }
+
+    // ── PNU (필지고유번호) 추출 ──
+    const pnu = await fetchPNU(coords.lat, coords.lng);
+    if(pnu) console.log('PNU:', pnu);
 
     // ── 데이터 로그: 수환경 ──
     dataLog.push({category:'수환경/홍수',icon:'💧',api:'OSM 수계 + 시뮬레이션',
@@ -3525,6 +3569,11 @@ const KEYS={
   flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef'  // 홍수위험지도 정보제공포털
 };
 
+// Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
+const WORKER_URL='https://weathered-bar-2c29.younrake.workers.dev';
+const ECVAM_KEY=KEYS.envgrd; // YD6X-CR5X-EJDT-V2OJ
+const ECVAM_DOMAIN='hubminyoung.github.io';
+
 function openSettings(){
   try{
     KEYS.vworld=localStorage.getItem('ls_vworld')||'525DBFC7-F789-3094-871F-CD46831310CB';
@@ -3773,6 +3822,54 @@ async function getRealUrban(c){
     }
     return null;
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
+}
+
+// ════════════════════════════════════════════
+// 환경부 토지피복도 (MCEE) — Cloudflare Worker 경유
+// ════════════════════════════════════════════
+function l2ToLc(code,name){
+  const c=String(code||''),n=(name||'').toLowerCase(),num=parseInt(c);
+  if(num===310||n.includes('침엽수림'))return{lnlc_cd:'3',lnlc_nm:'침엽수림',hansen:'W (침엽수하부)',_src:'환경부(2025)'};
+  if(num===320||n.includes('활엽수림'))return{lnlc_cd:'3',lnlc_nm:'활엽수림',hansen:'W (활엽수하부)',_src:'환경부(2025)'};
+  if(num===330||n.includes('혼효림'))return{lnlc_cd:'3',lnlc_nm:'혼효림',hansen:'W (혼효림가장자리)',_src:'환경부(2025)'};
+  if((num>=300&&num<400)||n.includes('산림')||n.includes('수림'))return{lnlc_cd:'3',lnlc_nm:name||'산림지',hansen:'W (삼림형)',_src:'환경부(2025)'};
+  if((num>=100&&num<200)||n.includes('주거')||n.includes('상업')||n.includes('공업')||n.includes('시가화'))return{lnlc_cd:'1',lnlc_nm:name||'시가화지역',hansen:'Fr (도시화단)',_src:'환경부(2025)'};
+  if((num>=200&&num<300)||n.includes('논')||n.includes('밭')||n.includes('농경'))return{lnlc_cd:'2',lnlc_nm:name||'농경지',hansen:'Fr (초지형)',_src:'환경부(2025)'};
+  if((num>=400&&num<500)||n.includes('초지'))return{lnlc_cd:'4',lnlc_nm:name||'초지',hansen:'Fr (Meadow)',_src:'환경부(2025)'};
+  if((num>=500&&num<600)||n.includes('습지'))return{lnlc_cd:'5',lnlc_nm:name||'습지',hansen:'W (습지형)',_src:'환경부(2025)'};
+  if((num>=600&&num<700)||n.includes('나지'))return{lnlc_cd:'6',lnlc_nm:name||'나지',hansen:'GR (건조초지)',_src:'환경부(2025)'};
+  if((num>=700&&num<800)||n.includes('수역')||n.includes('하천'))return{lnlc_cd:'7',lnlc_nm:name||'수역',hansen:'W (수변)',_src:'환경부(2025)'};
+  return{lnlc_cd:'0',lnlc_nm:name||code||'기타',hansen:'—',_src:'환경부(2025)'};
+}
+
+async function fetchMceeLC(lat,lng){
+  const d=0.005,minx=lng-d,miny=lat-d,maxx=lng+d,maxy=lat+d;
+  const params=`?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=EGIS:lv3_2025y&QUERY_LAYERS=EGIS:lv3_2025y&INFO_FORMAT=application/json&SRS=EPSG:4326&BBOX=${minx},${miny},${maxx},${maxy}&WIDTH=256&HEIGHT=256&X=128&Y=128`;
+  try{
+    const r=await fetch(WORKER_URL+params);
+    if(!r.ok)return null;
+    const d2=await r.json();
+    if(d2.features&&d2.features.length>0){
+      const p=d2.features[0].properties;
+      const code=p.l3_code||p.l2_code||p.l1_code,name=p.l3_name||p.l2_name||p.l1_name;
+      if(code||name)return l2ToLc(code,name);
+    }
+  }catch(e){console.warn('fetchMceeLC 오류:',e);}
+  return null;
+}
+
+// PNU(필지고유번호) 추출 — VWorld 필지경계 레이어
+async function fetchPNU(lat,lng){
+  if(!KEYS.vworld)return null;
+  try{
+    const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LP_PA_CBND_BUBUN&key=${KEYS.vworld}&format=json&geomFilter=POINT(${lng}%20${lat})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
+    const d=await vworldJsonp(url);
+    if(d&&d.response&&d.response.status==='OK'){
+      const f=d.response.result?.featureCollection?.features?.[0];
+      return f?.properties?.PNU||f?.properties?.pnu||null;
+    }
+  }catch(e){console.warn('fetchPNU 오류:',e);}
+  return null;
 }
 
 // ════════════════════════════════════════════
