@@ -1032,22 +1032,24 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // API 1: VWorld 지오코딩 (도로명+지번 모두 지원) → Nominatim 폴백
 // ════════════════════════════════════════════
 async function geocode(address){
-  // 1) VWorld 주소검색 API (도로명 우선, 지번 차선)
+  // 1) VWorld 주소검색 API (도로명 우선, 지번 차선) — CORS 프록시 폴백 포함
   if(KEYS.vworld){
     for(const type of ['ROAD','PARCEL']){
-      try{
-        const url=`https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(address)}&refine=true&simple=false&format=json&type=${type}&key=${KEYS.vworld}`;
-        const r=await fetch(url);
-        const d=await r.json();
-        if(d.response&&d.response.status==='OK'&&d.response.result){
-          const pt=d.response.result.point;
-          const lng=parseFloat(pt.x), lat=parseFloat(pt.y);
-          if(lat>=33&&lat<=39&&lng>=124&&lng<=132){
-            const refined=d.response.refined&&d.response.refined.text?d.response.refined.text:address;
-            return{lat,lng,name:refined,fullName:refined};
+      const vwBase=`https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(address)}&refine=true&simple=false&format=json&type=${type}&key=${KEYS.vworld}`;
+      for(const prefix of ['','https://corsproxy.io/?']){
+        try{
+          const r=await fetch(prefix+vwBase);
+          const d=await r.json();
+          if(d.response&&d.response.status==='OK'&&d.response.result){
+            const pt=d.response.result.point;
+            const lng=parseFloat(pt.x), lat=parseFloat(pt.y);
+            if(lat>=33&&lat<=39&&lng>=124&&lng<=132){
+              const refined=d.response.refined&&d.response.refined.text?d.response.refined.text:address;
+              return{lat,lng,name:refined,fullName:refined};
+            }
           }
-        }
-      }catch(e){console.warn('vworld geocode fail',type,e);}
+        }catch(e){console.warn('vworld geocode fail',prefix||'direct',type,e);}
+      }
     }
   }
   // 2) Nominatim 폴백 (VWorld 실패 시)
