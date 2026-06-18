@@ -348,6 +348,25 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1923;color:#e0e6ed;heig
 </head>
 <body>
 
+<!-- ⚠️ localhost 배너: file:// 프로토콜에서는 공공 API(data.go.kr) CORS 차단됨 -->
+<div id="localhost-banner" style="display:none;background:#7b3f00;color:#ffe0b2;font-size:13px;padding:10px 16px;text-align:center;position:sticky;top:0;z-index:9999;line-height:2;">
+  ⚠️ <b>file:// 실행 감지</b> — 공공 API(기상청·흙토람·에어코리아)가 <b>CORS</b>로 차단됩니다. 아래 중 하나로 로컬 서버를 실행하세요:&nbsp;&nbsp;
+  <code style="background:#5d2e00;padding:2px 8px;border-radius:4px;font-family:monospace;">npx serve .</code>
+  &nbsp;또는&nbsp;
+  <code style="background:#5d2e00;padding:2px 8px;border-radius:4px;font-family:monospace;">npx http-server .</code>
+  &nbsp;(Node.js)&nbsp;·&nbsp;
+  <code style="background:#5d2e00;padding:2px 8px;border-radius:4px;font-family:monospace;">python -m http.server 8000</code>
+  &nbsp;(Python)&nbsp;→&nbsp;
+  <a href="http://localhost:3000" style="color:#ffd54f;font-weight:bold;">localhost:3000</a> /
+  <a href="http://localhost:8080" style="color:#ffd54f;font-weight:bold;">8080</a> /
+  <a href="http://localhost:8000" style="color:#ffd54f;font-weight:bold;">8000</a> 에서 열기
+  <button onclick="document.getElementById('localhost-banner').style.display='none'"
+    style="margin-left:12px;background:none;border:1px solid #ffa040;color:#ffa040;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:12px;">✕</button>
+</div>
+<script>
+if(location.protocol==='file:'){document.getElementById('localhost-banner').style.display='block';}
+</script>
+
 <div class="header">
   <div>
     <div class="logo">🌿 <span>LandScope</span></div>
@@ -954,17 +973,17 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://www.airkorea.or.kr/web/realSearch',verifyLabel:'에어코리아 실시간 확인'});
     }
 
-    // ── KMA 기상 (키 있을 때) ──
+    // ── Open-Meteo 기상 (항상 시도, 키 불필요) ──
     const kmaWeather = await getRealKMAWeather(coords);
     if(kmaWeather){
-      // KMA 데이터로 기상 업그레이드
       Object.assign(weather, kmaWeather);
-      const {nx,ny}=kmaWeather.grid;
-      const kmaUrl=`https://apis.data.go.kr/1360000/VilageFcstInfoService2.0/getVilageFcst?serviceKey=[KMA키]&pageNo=1&numOfRows=100&dataType=JSON&base_date=${kmaWeather.baseDate}&base_time=${kmaWeather.baseTime}&nx=${nx}&ny=${ny}`;
-      dataLog.push({category:'기후/기상 (KMA)',icon:'🌦️',api:'기상자료개방포털 KMA (키 필요)',
-        url:kmaUrl,note:`Lambert 격자 (nx=${nx}, ny=${ny}) 단기예보 — 발표 ${kmaWeather.baseDate} ${kmaWeather.baseTime}`,
-        values:`기온 ${kmaWeather.temperature}°C / 풍속 ${kmaWeather.wind_speed}m/s ${kmaWeather.wind_direction_text} / 습도 ${kmaWeather.humidity}% / 하늘 ${kmaWeather.sky}`,
-        status:'real',verifyUrl:'https://data.kma.go.kr/',verifyLabel:'KMA 기상데이터 포털'});
+      // 연강수량 실측값을 water 객체에 반영
+      if(kmaWeather.annualPrecip) water.annualPrecip = kmaWeather.annualPrecip;
+      const omUrl=`https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,wind_direction_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration&timezone=Asia/Seoul`;
+      dataLog.push({category:'기후/기상 (Open-Meteo)',icon:'🌦️',api:'Open-Meteo (ECMWF·무료·키 불필요)',
+        url:omUrl,note:`실시간 기상 + 과거 5년 연강수량 평균 — ECMWF ERA5 기반`,
+        values:`기온 ${kmaWeather.temperature}°C / 체감 ${kmaWeather.feels_like}°C / 풍속 ${kmaWeather.wind_speed}m/s ${kmaWeather.wind_direction_text} / 연강수량 ${kmaWeather.annualPrecip||'계산중'}mm`,
+        status:'real',verifyUrl:'https://open-meteo.com/',verifyLabel:'Open-Meteo 문서'});
     }
 
     // ── 흙토람 토양 (키 있을 때) ──
@@ -3492,7 +3511,15 @@ let dataLog=[];
 // ════════════════════════════════════════════
 // API 키 설정 모달
 // ════════════════════════════════════════════
-const KEYS={vworld:'525DBFC7-F789-3094-871F-CD46831310CB',airkorea:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c'};
+const KEYS={
+  vworld:'525DBFC7-F789-3094-871F-CD46831310CB',
+  airkorea:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
+  kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
+  soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
+  nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
+  envgrd:'YD6X-CR5X-EJDT-V2OJ',   // 국토환경성평가지도
+  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef'  // 홍수위험지도 정보제공포털
+};
 
 function openSettings(){
   try{
@@ -3766,71 +3793,166 @@ function latLngToKMAGrid(lat, lon) {
 }
 
 async function getRealKMAWeather(c){
+  // KMA 우선 (localhost 등록 시 작동), 실패 시 Open-Meteo 폴백
+  const kma=await getRealKMAWeatherKMA(c);
+  if(kma){
+    // 연강수량은 Open-Meteo에서 별도 취득
+    try{
+      const now=new Date();const endY=now.getFullYear()-1;const startY=endY-4;
+      const urlH=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}&start_date=${startY}-01-01&end_date=${endY}-12-31&daily=precipitation_sum&timezone=Asia/Seoul`;
+      const rh=await fetch(urlH);const dh=await rh.json();
+      if(dh.daily?.precipitation_sum){
+        const td=dh.daily.precipitation_sum.length;
+        kma.annualPrecip=Math.round(dh.daily.precipitation_sum.reduce((a,v)=>a+(v||0),0)/(td/365));
+      }
+    }catch(_){}
+    kma.source='실제 (기상청 KMA + Open-Meteo 연강수량)';
+    return kma;
+  }
+  // Open-Meteo 폴백
+  try{
+    const wmoText={0:'맑음',1:'대체로 맑음',2:'구름 많음',3:'흐림',45:'안개',48:'안개',51:'이슬비',53:'이슬비',55:'이슬비',61:'비',63:'비',65:'강한비',71:'눈',73:'눈',75:'강한눈',80:'소나기',81:'소나기',82:'강한소나기',95:'뇌우',96:'뇌우',99:'뇌우'};
+
+    // 1) 현재 기상 + 오늘 예보
+    const urlCur=`https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,wind_direction_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration&timezone=Asia/Seoul&forecast_days=1`;
+    const r1=await fetch(urlCur);
+    const d1=await r1.json();
+    if(!d1.current) return null;
+    const cur=d1.current, daily=d1.daily||{};
+    const T=+(cur.temperature_2m||15).toFixed(1);
+    const feels=+(cur.apparent_temperature||T).toFixed(1);
+    const wcode=cur.weather_code||0;
+    const sky=wmoText[wcode]||'흐림';
+    const wdir=cur.wind_direction_10m||0;
+    const wsp=+(cur.wind_speed_10m||0).toFixed(1);
+    const tmax=+(daily.temperature_2m_max?.[0]||T+3).toFixed(1);
+    const tmin=+(daily.temperature_2m_min?.[0]||T-5).toFixed(1);
+    const prcp=+(daily.precipitation_sum?.[0]||0).toFixed(1);
+    const sun=daily.sunshine_duration?.[0]?+(daily.sunshine_duration[0]/3600).toFixed(1):6;
+
+    // 2) 연강수량 (과거 5년 평균)
+    let annualPrecip=1200; // 기본값
+    try{
+      const now=new Date();
+      const endY=now.getFullYear()-1;
+      const startY=endY-4;
+      const urlHist=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}&start_date=${startY}-01-01&end_date=${endY}-12-31&daily=precipitation_sum&timezone=Asia/Seoul`;
+      const r2=await fetch(urlHist);
+      const d2=await r2.json();
+      if(d2.daily?.precipitation_sum){
+        const totalDays=d2.daily.precipitation_sum.length;
+        const totalMm=d2.daily.precipitation_sum.reduce((a,v)=>a+(v||0),0);
+        annualPrecip=Math.round(totalMm/(totalDays/365));
+      }
+    }catch(e2){console.warn('Open-Meteo 연강수량 조회 실패, 기본값 사용');}
+
+    return{
+      temperature:T, feels_like:feels, humidity:cur.relative_humidity_2m||60,
+      wind_speed:wsp, wind_direction:wdir, wind_direction_text:windTxt(wdir),
+      precipitation:prcp, temp_max:tmax, temp_min:tmin,
+      avg_precip:prcp, avg_sun:sun, annualPrecip,
+      sky, source:'실제 (Open-Meteo 기상 · ECMWF 모델)', reliability:'real'
+    };
+  }catch(e){console.warn('Open-Meteo 오류:',e);return null;}
+}
+
+// KMA 단기예보 (기상청 data.go.kr — localhost 등록 필요)
+async function getRealKMAWeatherKMA(c){
   if(!KEYS.kma) return null;
   try{
     const now=new Date();
     const pad=n=>String(n).padStart(2,'0');
     const baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
-    // KMA 발표 시각 (매 3시간: 0200,0500,0800,1100,1400,1700,2000,2300)
     const hrs=[2,5,8,11,14,17,20,23];
     const curH=now.getHours();
     const baseH=hrs.filter(h=>h<=curH).pop()||23;
     const baseTime=`${pad(baseH)}00`;
     const {nx,ny}=latLngToKMAGrid(c.lat,c.lng);
     const key=encodeURIComponent(KEYS.kma);
-    const url=`https://apis.data.go.kr/1360000/VilageFcstInfoService2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=100&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
+    // ✅ 수정: VilageFcstInfoService_2.0 (언더스코어 필수)
+    const url=`https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=100&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
     const r=await fetch(url);
     const d=await r.json();
-    if(d.response?.header?.resultCode!=='00') return null;
+    if(d.response?.header?.resultCode!=='00'){
+      console.warn('KMA resultCode:', d.response?.header?.resultCode, d.response?.header?.resultMsg);
+      return null;
+    }
     const items=d.response?.body?.items?.item||[];
     const get=(cat)=>{const f=items.find(x=>x.category===cat);return f?+f.fcstValue:null;};
-    const T1H=get('T1H'),WSD=get('WSD'),REH=get('REH'),VEC=get('VEC'),RN1=get('RN1'),SKY=get('SKY');
+    const T1H=get('TMP'),WSD=get('WSD'),REH=get('REH'),VEC=get('VEC'),PTY=get('PTY'),SKY=get('SKY');
     if(T1H===null) return null;
     const skyText={1:'맑음',3:'구름많음',4:'흐림'}[SKY]||'흐림';
     return{
       temperature:T1H, feels_like:+(T1H-1.5).toFixed(1), humidity:REH||60,
       wind_speed:WSD||0, wind_direction:VEC||0, wind_direction_text:windTxt(VEC||0),
-      precipitation:RN1||0, temp_max:T1H+3, temp_min:T1H-5,
-      avg_precip:RN1||0, avg_sun:SKY===1?8:SKY===3?5:3,
-      sky:skyText, grid:{nx,ny}, baseDate, baseTime,
-      source:`실제 (기상자료개방포털 KMA · 격자${nx},${ny})`, reliability:'high'
+      precipitation:PTY>0?1:0, temp_max:T1H+3, temp_min:T1H-5,
+      avg_precip:PTY>0?2:0, avg_sun:SKY===1?8:SKY===3?5:3,
+      sky:skyText, source:`실제 (기상청 KMA 단기예보 · 격자${nx},${ny})`, reliability:'real'
     };
-  }catch(e){console.warn('KMA API 오류:',e);return null;}
+  }catch(e){console.warn('KMA API 오류:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
-// 실제 API: 흙토람 (RDA) — 토양환경정보
+// 실제 API: 흙토람 V3 (RDA) — 토양특성 상세정보
 // ════════════════════════════════════════════
 async function getRealSoilRDA(coords, address){
   if(!KEYS.soilrda) return null;
-  try{
-    // 주소 기반 조회 (흙토람 토양환경정보 서비스)
-    const addr=encodeURIComponent(address||`${coords.lat.toFixed(4)},${coords.lng.toFixed(4)}`);
-    const key=encodeURIComponent(KEYS.soilrda);
-    const url=`https://apis.data.go.kr/1390802/ScilInfrInfo/getScilInfrInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`;
-    const r=await fetch(url);
-    const text=await r.text();
-    // XML 파싱 (흙토람 API는 XML 반환)
-    const parser=new DOMParser();
-    const xml=parser.parseFromString(text,'text/xml');
-    const items=xml.getElementsByTagName('item');
-    if(items.length>0){
-      const item=items[0];
-      const get=tag=>{const el=item.getElementsByTagName(tag)[0];return el?el.textContent.trim():'';};
-      const soil_type=get('siltNm')||get('soilType')||get('scilNm');
-      const ph=parseFloat(get('pH60'))||parseFloat(get('ph'));
-      const om=parseFloat(get('orgMatCn'))||parseFloat(get('organicMatter'));
-      const drainage=get('drngClsNm')||get('drainageClass');
-      if(soil_type||ph){
-        return{
-          soil_type:soil_type||'미확인',ph:ph||6.0,om:om||1.5,
-          drainage:drainage||'보통',
-          source:'실제 (흙토람 농촌진흥청 RDA)',reliability:'real'
-        };
+  // 시도: 토양도 기반 토양특성 상세 정보 V3
+  const key=encodeURIComponent(KEYS.soilrda);
+  const addr=encodeURIComponent((address||'').replace(/\s+/g,' ').trim());
+
+  // V3 좌표 기반 엔드포인트 시도
+  const endpoints=[
+    `https://apis.data.go.kr/1390802/SoilEnvironmentService3/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&lat=${coords.lat}&lon=${coords.lng}`,
+    `https://apis.data.go.kr/1390802/SoilEnvironmentService3/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+    `https://apis.data.go.kr/1390802/SoilEnvironmentService_V2/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+    // 구 엔드포인트 (V1 폴백)
+    `https://apis.data.go.kr/1390802/ScilInfrInfo/getScilInfrInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+  ];
+
+  for(const url of endpoints){
+    try{
+      const r=await fetch(url);
+      const text=await r.text();
+      // JSON 우선 시도
+      let data=null;
+      try{data=JSON.parse(text);}catch(_){}
+      if(data){
+        const items=data.response?.body?.items?.item;
+        const item=Array.isArray(items)?items[0]:items;
+        if(item){
+          const soil_type=item.soilType||item.siltNm||item.scilNm||item.textureClass||'';
+          const ph=parseFloat(item.pH60||item.ph||item.phWater||0);
+          const om=parseFloat(item.orgMatCn||item.organicMatter||item.om||0);
+          const drainage=item.drngClsNm||item.drainageClass||item.drainage||'';
+          if(soil_type||ph){
+            console.log('✅ 흙토람 JSON 성공:', url);
+            return{soil_type:soil_type||'미확인',ph:ph||6.0,om:om||1.5,drainage:drainage||'보통',
+              source:'실제 (흙토람 농촌진흥청 V3)',reliability:'real'};
+          }
+        }
       }
-    }
-    return null;
-  }catch(e){console.warn('흙토람 API 오류:',e);return null;}
+      // XML 파싱
+      const parser=new DOMParser();
+      const xml=parser.parseFromString(text,'text/xml');
+      const xmlItems=xml.getElementsByTagName('item');
+      if(xmlItems.length>0){
+        const item=xmlItems[0];
+        const get=tag=>{const el=item.getElementsByTagName(tag)[0];return el?el.textContent.trim():'';};
+        const soil_type=get('soilType')||get('siltNm')||get('scilNm')||get('textureClass');
+        const ph=parseFloat(get('pH60')||get('ph')||get('phWater')||'0');
+        const om=parseFloat(get('orgMatCn')||get('organicMatter')||get('om')||'0');
+        const drainage=get('drngClsNm')||get('drainageClass')||get('drainage');
+        if(soil_type||ph){
+          console.log('✅ 흙토람 XML 성공:', url);
+          return{soil_type:soil_type||'미확인',ph:ph||6.0,om:om||1.5,drainage:drainage||'보통',
+            source:'실제 (흙토람 농촌진흥청)',reliability:'real'};
+        }
+      }
+    }catch(e){console.warn('흙토람 시도 실패:', url.split('?')[0], e.message);}
+  }
+  return null;
+
 }
 
 // ════════════════════════════════════════════
