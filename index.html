@@ -2866,39 +2866,54 @@ function renderResults(d){
         ${eco.nearNodeName?`<div class="data-row"><span class="data-key">인접 생태 거점</span><span class="data-val">${eco.nearNodeName} (${eco.nearNodeDist}m)</span></div>`:''}
         <div class="data-row" style="flex-direction:column;align-items:flex-start;gap:6px;"><span class="data-key">서식 생물</span>${specHtml}</div>
         ${eco.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 환경 · 제약 ──</div>
         <div class="data-row"><span class="data-key">국토환경성등급</span><span class="data-val">${evg?badge(evg.label,evg.badgeColor):'—'}</span></div>
         ${evg?`<div style="font-size:10px;color:#78909c;padding:2px 0 4px">${evg.note}</div>`:''}
+        ${eco.nearHan||water.floodRisk==='높음'?`<div class="data-row"><span class="data-key">상수원 보호구역</span><span class="data-val"><span style="color:#ef9a9a;font-size:11px">⚠️ 수계 인접 — 확인 필요</span></span></div>`:''}
+        ${eco.nearHan?`<div class="data-row"><span class="data-key">특이사항</span><span class="data-val" style="font-size:11px;line-height:1.5;color:#ffcc80">겨울철새 도래지 가능성<br>야간조명·매립형 수경시설 제한 검토</span></div>`:''}
+        ${(urb.restr&&urb.restr.length)?`<div class="data-row"><span class="data-key">법적 규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
         <div class="source-row">⬡ ${eco.source}</div>
       </div>
 
       <div class="tab-content" id="tab-climate">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 연간 기후 ──</div>
+        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?({'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'}[hz.zone]||'—'):'—')}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm <span style="font-size:10px;color:#78909c">(7~8월 집중 ~${Math.round(water.annualPrecip*0.62)}mm)</span></span></div>
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#80deea;font-weight:600">${hz?hz.minTemp:'—'}</span></div>
+        <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
+        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 현재 기상 ──</div>
         <div class="data-row"><span class="data-key">현재 기온</span><span class="data-val">${wx.temperature}°C (체감 ${wx.feels_like}°C)</span></div>
         <div class="data-row"><span class="data-key">7일 최고/최저</span><span class="data-val">${wx.temp_max}°C / ${wx.temp_min}°C</span></div>
         <div class="data-row"><span class="data-key">풍속/풍향</span><span class="data-val">${wx.wind_speed}m/s · ${wx.wind_direction_text}</span></div>
         <div class="data-row"><span class="data-key">습도</span><span class="data-val">${wx.humidity}%</span></div>
-        <div class="data-row"><span class="data-key">평균 강수</span><span class="data-val">${wx.avg_precip}mm/day</span></div>
         <div class="data-row"><span class="data-key">평균 일조</span><span class="data-val">${wx.avg_sun}h/day</span></div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm <span style="font-size:10px;color:#78909c">(여름 집중 ~${Math.round(water.annualPrecip*0.7)}mm)</span></span></div>
-        <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
-        ${hz?`<div style="font-size:10px;color:#78909c;padding:2px 0 4px">최저기온 ${hz.minTemp} · ${hz.note}</div>`:''}
         <div class="source-row">${wx.reliability==='high'?'● 실시간':'⬡ 시뮬레이션'} · ${wx.source}</div>
       </div>
 
       <div class="tab-content" id="tab-soil">
-        <div class="data-row"><span class="data-key">토양 유형</span><span class="data-val">${soil.soil_type}</span></div>
-        <div class="data-row"><span class="data-key">배수</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}</span></div>
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토양 ──</div>
+        ${soil.soilSeries?`<div class="data-row"><span class="data-key">토양통</span><span class="data-val" style="font-weight:600;color:#a5d6a7">${soil.soilSeries}</span></div>`:''}
+        <div class="data-row"><span class="data-key">토성 (토양유형)</span><span class="data-val">${soil.soil_type}</span></div>
+        <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth!=null?(soil.effectiveDepth<25?`<span style="color:#ef9a9a;font-weight:600">매우 얕음 (${soil.effectiveDepth}cm) ⚠️</span>`:soil.effectiveDepth<50?`얕음 (${soil.effectiveDepth}cm)`:`${soil.effectiveDepth}cm`):'—'}</span></div>
+        <div class="data-row"><span class="data-key">배수 (공식)</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}</span></div>
+        ${soil.drainageNote?`<div style="font-size:10px;color:#ffcc80;padding:2px 0 4px">⚠️ ${soil.drainageNote}</div>`:''}
         <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}</span></div>
         <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}%</span></div>
-        <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth??'—'}cm ${(soil.effectiveDepth??100)<30?'<span style="color:#ef9a9a">⚠️ 얕음</span>':''}</span></div>
         <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravelPct??'—'}% ${(soil.gravelPct??0)>30?'<span style="color:#ef9a9a">⚠️ 높음</span>':''}</span></div>
         <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gw}m</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지형 · 지질 ──</div>
+        <div class="data-row"><span class="data-key">해발고도 / 지형</span><span class="data-val">${elev&&elev.elevation!=null?elev.elevation+'m':'—'} · ${elev&&elev.elevation<30?'평지 (하성평탄지)':elev&&elev.elevation<100?'구릉지':'산지'}</span></div>
         <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${soil.slope}°</span></div>
+        ${(elev&&elev.elevation<15||soil.gw<1)?`<div class="data-row"><span class="data-key">수문지질</span><span class="data-val" style="font-size:11px">충적층 — 표면 배수 불량·물 고임 가능</span></div>`:''}
         <div class="data-row"><span class="data-key">식재 적합성</span><span class="data-val">${badge(soil.suitability,soil.ok?'green':'yellow')}</span></div>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1e3a4f;">
-          <div style="font-size:11px;font-weight:700;color:#78909c;margin-bottom:6px">소음 · 대기질</div>
-          <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}</span></div>
-          <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noise}dB ${badge(air.noiseg,air.noise>70?'red':air.noise>60?'yellow':'green')}</span></div>
-        </div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>
+        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}</span></div>
+        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noise}dB ${badge(air.noiseg,air.noise>70?'red':air.noise>60?'yellow':'green')}</span></div>
         ${[...soil.implications,...air.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         <div class="source-row">${air.reliability==='real'?'● 실시간':'⬡ 시뮬레이션'} · ${air.source}${air.station?' ('+air.station+')':''}</div>
         <div class="source-row">⬡ ${soil.source}</div>
@@ -3573,6 +3588,7 @@ const KEYS={
 const WORKER_URL='https://weathered-bar-2c29.younrake.workers.dev';
 const ECVAM_KEY=KEYS.envgrd; // YD6X-CR5X-EJDT-V2OJ
 const ECVAM_DOMAIN='hubminyoung.github.io';
+// data.go.kr → Worker 라우트: /kma /soil-v2 /soil-v3 /airkorea /nibr /vworld-data
 
 function openSettings(){
   try{
@@ -3672,7 +3688,7 @@ async function testApi(type){
       const now=new Date();const pad=n=>String(n).padStart(2,'0');
       const baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
       const k=encodeURIComponent(key);
-      const url=`https://apis.data.go.kr/1360000/VilageFcstInfoService2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=0600&nx=61&ny=126`;
+      const url=`${WORKER_URL}/kma/VilageFcstInfoService2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=0600&nx=61&ny=126`;
       const r=await fetch(url);const d=await r.json();
       if(d.response?.header?.resultCode==='00'){
         const t=d.response?.body?.items?.item?.find(x=>x.category==='T1H');
@@ -3692,7 +3708,7 @@ async function testApi(type){
     document.getElementById('status-soilrda').textContent='⏳ 연결 테스트 중…';document.getElementById('status-soilrda').className='api-status idle';
     try{
       const k=encodeURIComponent(key);
-      const url=`https://apis.data.go.kr/1390802/ScilInfrInfo/getScilInfrInfo?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('서울특별시 강남구')}`;
+      const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('서울특별시 강남구')}`;
       const r=await fetch(url);const text=await r.text();
       const xml=new DOMParser().parseFromString(text,'text/xml');
       const items=xml.getElementsByTagName('item');
@@ -3714,7 +3730,7 @@ async function testApi(type){
     document.getElementById('status-nibr').textContent='⏳ 연결 테스트 중…';document.getElementById('status-nibr').className='api-status idle';
     try{
       const k=encodeURIComponent(key);
-      const url=`https://apis.data.go.kr/1480523/endangeredSpeciesSvc/getESNearbyList?serviceKey=${k}&lat=37.5665&lon=126.9780&radius=5000&pageNo=1&numOfRows=5&type=json`;
+      const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${k}&lat=37.5665&lon=126.9780&radius=5000&pageNo=1&numOfRows=5&type=json`;
       const r=await fetch(url);const d=await r.json();
       if(d.response?.header?.resultCode==='00'){
         const items=d.response?.body?.items?.item;
@@ -3756,7 +3772,7 @@ async function testApi(type){
     if(!key){document.getElementById('status-airkorea').textContent='⚠️ 키를 먼저 입력하세요';return;}
     document.getElementById('status-airkorea').textContent='⏳ 연결 테스트 중…';document.getElementById('status-airkorea').className='api-status idle';
     try{
-      const url=`https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${encodeURIComponent(key)}&returnType=json&numOfRows=5&pageNo=1&sidoName=${encodeURIComponent('서울')}&ver=1.0`;
+      const url=`${WORKER_URL}/airkorea/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${encodeURIComponent(key)}&returnType=json&numOfRows=5&pageNo=1&sidoName=${encodeURIComponent('서울')}&ver=1.0`;
       const r=await fetch(url);const d=await r.json();
       if(d.response?.body?.items?.length>0){
         const sample=d.response.body.items[0];
@@ -3793,8 +3809,8 @@ async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
     // JSONP로 CORS 우회 (GitHub Pages 포함 모든 도메인에서 동작)
-    const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key=${KEYS.vworld}&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
-    const d=await vworldJsonp(url);
+    const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&data=LT_C_UQ111&key=${KEYS.vworld}&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
+    const d=await(await fetch(url)).json();
     if(d.response&&d.response.status==='OK'&&d.response.result&&d.response.result.featureCollection){
       const features=d.response.result.featureCollection.features;
       if(features&&features.length>0){
@@ -3971,7 +3987,7 @@ async function getRealKMAWeatherKMA(c){
     const {nx,ny}=latLngToKMAGrid(c.lat,c.lng);
     const key=encodeURIComponent(KEYS.kma);
     // ✅ 수정: VilageFcstInfoService_2.0 (언더스코어 필수)
-    const url=`https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=100&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
+    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=100&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
     const r=await fetch(url);
     const d=await r.json();
     if(d.response?.header?.resultCode!=='00'){
@@ -4004,11 +4020,11 @@ async function getRealSoilRDA(coords, address){
 
   // V3 좌표 기반 엔드포인트 시도
   const endpoints=[
-    `https://apis.data.go.kr/1390802/SoilEnvironmentService3/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&lat=${coords.lat}&lon=${coords.lng}`,
-    `https://apis.data.go.kr/1390802/SoilEnvironmentService3/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
-    `https://apis.data.go.kr/1390802/SoilEnvironmentService_V2/getSoilCharacteristicInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+    `${WORKER_URL}/soil-v3?serviceKey=${key}&numOfRows=5&pageNo=1&lat=${coords.lat}&lon=${coords.lng}`,
+    `${WORKER_URL}/soil-v3?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+    `${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
     // 구 엔드포인트 (V1 폴백)
-    `https://apis.data.go.kr/1390802/ScilInfrInfo/getScilInfrInfo?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
+    `${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
   ];
 
   for(const url of endpoints){
@@ -4064,7 +4080,7 @@ async function getRealSpeciesNIBR(c){
   try{
     const key=encodeURIComponent(KEYS.nibr);
     // 국립생물자원관 생물다양성 분포 API — 격자 기반
-    const url=`https://apis.data.go.kr/1480523/endangeredSpeciesSvc/getESNearbyList?serviceKey=${key}&lat=${c.lat}&lon=${c.lng}&radius=5000&pageNo=1&numOfRows=20&type=json`;
+    const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${key}&lat=${c.lat}&lon=${c.lng}&radius=5000&pageNo=1&numOfRows=20&type=json`;
     const r=await fetch(url);
     const d=await r.json();
     if(d.response?.body?.items){
@@ -4111,7 +4127,7 @@ async function getRealAir(c){
     }
     let sidoName=detectSido(c.lat,c.lng);
     const key=encodeURIComponent(KEYS.airkorea);
-    const url=`https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${key}&returnType=json&numOfRows=100&pageNo=1&sidoName=${encodeURIComponent(sidoName)}&ver=1.0`;
+    const url=`${WORKER_URL}/airkorea/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${key}&returnType=json&numOfRows=100&pageNo=1&sidoName=${encodeURIComponent(sidoName)}&ver=1.0`;
     const r=await fetch(url);
     const d=await r.json();
     if(d.response&&d.response.body&&d.response.body.items){
@@ -4260,42 +4276,4 @@ async function getRealAir(c){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
         <div>
           <div class="api-group-title">🦎 국립생물자원관 (NIBR)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">반경 5km 멸종위기종 실제 분포 · <a class="api-link" href="https://www.data.go.kr/data/15122312/openapi.do" target="_blank">키 신청 (무료)</a></div>
-        </div>
-        <div id="test-nibr-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-nibr" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('nibr')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-nibr" style="margin-top:4px;">⬡ 미설정 — 시뮬레이션 사용 중 (키 입력 시 실제 멸종위기종 분포로 업그레이드)</div>
-    </div>
-
-    <!-- 참고 링크 (수동 확인) -->
-    <div class="api-group" style="border-color:#263238;padding:10px 14px;">
-      <div class="api-group-title" style="color:#455a64;margin-bottom:6px;">🗺️ WMS 지도 오버레이 (키 불필요 · 레이어 패널에서 토글)</div>
-      <div style="font-size:10px;color:#546e7a;display:flex;flex-direction:column;gap:3px;">
-        <div>🌿 생태자연도 — 환경부 EGIS (<a class="api-link" href="https://egis.me.go.kr" target="_blank">egis.me.go.kr</a>)</div>
-        <div>🌲 임상도 — 산림청 fGIS (<a class="api-link" href="https://fgis.fs.go.kr" target="_blank">fgis.fs.go.kr</a>)</div>
-        <div>🏞️ 토지피복도 — 환경부 EGIS (<a class="api-link" href="https://egis.me.go.kr" target="_blank">egis.me.go.kr</a>)</div>
-      </div>
-      <div class="api-group-title" style="color:#455a64;margin-top:8px;margin-bottom:4px;">🔒 수동 확인 권장 (브라우저 CORS 제한)</div>
-      <div style="font-size:10px;color:#37474f;display:flex;flex-direction:column;gap:3px;">
-        <div>인구·사회 통계 — 통계청 (<a class="api-link" href="https://kosis.kr" target="_blank" style="color:#546e7a;">KOSIS</a>)</div>
-        <div>소음 실측 — 환경부 소음지도 (<a class="api-link" href="https://www.noiseinfo.or.kr" target="_blank" style="color:#546e7a;">noiseinfo.or.kr</a>)</div>
-        <div>수문자료 — 물정보포털 (<a class="api-link" href="https://www.water.or.kr" target="_blank" style="color:#546e7a;">water.or.kr</a>)</div>
-        <div>생태공간정보 — 에코뱅크 (<a class="api-link" href="https://www.nie.re.kr/ecobank" target="_blank" style="color:#546e7a;">nie.re.kr/ecobank</a>)</div>
-        <div>국토 DEM·수치지도 — 국토지리정보원 (<a class="api-link" href="https://map.ngii.go.kr" target="_blank" style="color:#546e7a;">ngii.go.kr</a>)</div>
-        <div>환경영향평가 GIS — 환경부 (<a class="api-link" href="https://www.eiass.go.kr" target="_blank" style="color:#546e7a;">eiass.go.kr</a>)</div>
-      </div>
-    </div>
-
-    <div class="modal-btn-row">
-      <button class="modal-btn primary" onclick="saveApiKeys()">💾 저장 및 적용</button>
-      <button class="modal-btn secondary" onclick="closeSettings()">닫기</button>
-    </div>
-  </div>
-</div>
-
-</body>
-</html>
+          <div class="api-group-desc" style="margin-bottom:0;">반경 5km 멸종위기종 실제 분포 · <a class="api-link" href="https://www.data.go.kr/data/15122312/openapi.do" tar
