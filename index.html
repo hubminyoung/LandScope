@@ -2728,7 +2728,7 @@ function updateMap(d){
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
 function renderResults(d){
-  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg}=d;
+  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev}=d;
   const sc=an.scores;
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
@@ -3090,7 +3090,7 @@ async function downloadPDF(){
   btn.disabled=true; btn.textContent='⏳ PDF 생성 중…';
   try{
     const d=analysisResult;
-    const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg}=d;
+    const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev}=d;
     const now=new Date();
     const ts=`${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
 
