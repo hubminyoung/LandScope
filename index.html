@@ -435,6 +435,9 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         <label class="layer-item"><input type="checkbox" id="l-landcover" onchange="toggleLandcover()"> 🏞️ 토지피복도 (환경부)</label>
         <label class="layer-item"><input type="checkbox" id="l-ecvam" onchange="toggleEcvam()"> 🗺️ 환경성평가도 (국토부)</label>
         <label class="layer-item"><input type="checkbox" id="l-ecozone" onchange="toggleEcozone()"> 🦋 생태보전지역 (환경부)</label>
+        <label class="layer-item"><input type="checkbox" id="l-ecobank-fish" onchange="toggleEcobank('fish')"> 🐟 생태조사_어류 (에코뱅크)</label>
+        <label class="layer-item"><input type="checkbox" id="l-ecobank-bird" onchange="toggleEcobank('bird')"> 🐦 생태조사_조류 (에코뱅크)</label>
+        <label class="layer-item"><input type="checkbox" id="l-ecobank-plant" onchange="toggleEcobank('plant')"> 🌿 생태조사_식물상 (에코뱅크)</label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">베이스맵</div>
         <label class="layer-item"><input type="radio" name="bm" value="osm" checked onchange="changeBM('osm')"> 지도</label>
@@ -584,6 +587,31 @@ function toggleEcozone(){
     }).addTo(map);
     showWMSToast('🦋 생태보전지역 (환경부)');
   }else if(ecozoneWmsLayer){map.removeLayer(ecozoneWmsLayer);ecozoneWmsLayer=null;}
+}
+
+// 에코뱅크 WMS 레이어 (nie-ecobank.kr — Worker /ecobank-wms 라우트 필요)
+const ECOBANK_LAYERS={
+  fish:'mv_map_ecpe_fishes_pyn',
+  bird:'mv_map_ecpe_birds_point',
+  plant:'mv_map_ecpe_flr_pyn'
+};
+const ECOBANK_LABELS={fish:'🐟 생태조사_어류',bird:'🐦 생태조사_조류',plant:'🌿 생태조사_식물상'};
+let ecobankWmsLayers={};
+function toggleEcobank(type){
+  const chk=document.getElementById(`l-ecobank-${type}`);
+  if(chk.checked){
+    const layer=L.tileLayer.wms(WORKER_URL+'/ecobank-wms',{
+      layers:ECOBANK_LAYERS[type],format:'image/png',transparent:true,
+      opacity:0.65,attribution:'© 국립생태원 에코뱅크',
+      APIKEY:KEYS.ecobank,
+      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }).addTo(map);
+    ecobankWmsLayers[type]=layer;
+    showWMSToast(ECOBANK_LABELS[type]+' (에코뱅크)');
+  }else if(ecobankWmsLayers[type]){
+    map.removeLayer(ecobankWmsLayers[type]);
+    delete ecobankWmsLayers[type];
+  }
 }
 
 function showWMSToast(name){
@@ -1045,19 +1073,24 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://soil.rda.go.kr/soil/',verifyLabel:'흙토람 직접 확인'});
     }
 
-    // ── 국립생물자원관 서식종 (키 있을 때) ──
-    const realSpecies = await getRealSpeciesNIBR(coords);
-    if(realSpecies&&realSpecies.species.length>0){
-      // 실제 종 데이터로 ecology 업그레이드
-      ecology.species=[...realSpecies.species,...ecology.species.filter(s=>
-        !realSpecies.species.some(r=>r.name===s.name)
-      )].slice(0,5);
-      ecology.source='실제 (OpenStreetMap + 국립생물자원관 NIBR)';
-      dataLog.push({category:'서식종 (NIBR)',icon:'🦎',api:'국립생물자원관 생물지리정보 (키 필요)',
-        url:'https://apis.data.go.kr/1480523/endangeredSpeciesSvc/getESNearbyList',
-        note:`반경 5km 이내 멸종위기종 분포 — ${realSpecies.species.length}종 발견`,
-        values:realSpecies.species.map(s=>`${s.name}(${s.status})`).join(', '),
-        status:'real',verifyUrl:'https://species.nibr.go.kr/',verifyLabel:'국립생물자원관 확인'});
+    // ── 서식종: NIBR(전국) + 경기도 보호종/보호수(경기도 한정) 병렬 조회 ──
+    const [realSpecies, ggProtected] = await Promise.allSettled([
+      getRealSpeciesNIBR(coords),
+      getGyeonggiProtected(coords, address)
+    ]);
+    const speciesData = realSpecies.value || ggProtected.value;
+    if(speciesData&&speciesData.species.length>0){
+      ecology.species=[...speciesData.species,...ecology.species.filter(s=>
+        !speciesData.species.some(r=>r.name===s.name)
+      )].slice(0,6);
+      ecology.source=`실제 (OpenStreetMap + ${speciesData.source.includes('NIBR')?'국립생물자원관':'경기도 공공데이터'})`;
+      const apiLabel=speciesData.source.includes('NIBR')?'NIBR':'경기도';
+      dataLog.push({category:`서식·보호종 (${apiLabel})`,icon:'🦎',
+        api:speciesData.source,
+        note:`${speciesData.species.length}종/그루 확인`,
+        values:speciesData.species.map(s=>`${s.icon}${s.name}(${s.status})`).join(', '),
+        status:'real',verifyUrl:speciesData.source.includes('NIBR')?'https://species.nibr.go.kr/':'https://openapi.gg.go.kr/',
+        verifyLabel:speciesData.source.includes('NIBR')?'국립생물자원관 확인':'경기도 공공데이터 확인'});
     }
     
     // ── 생태자연도 실제 등급 조회 (PNU → emdCd 8자리) ──
@@ -3683,8 +3716,10 @@ const KEYS={
   kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  envgrd:'YD6X-CR5X-EJDT-V2OJ',   // 국토환경성평가지도
-  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef'  // 홍수위험지도 정보제공포털
+  envgrd:'YD6X-CR5X-EJDT-V2OJ',             // 국토환경성평가지도
+  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',  // 홍수위험지도 정보제공포털
+  ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272', // 에코뱅크 (국립생태원)
+  gyeonggi:'f195170eba6849b1a7ebf5d594e20346'   // 경기도 공공데이터 (보호종/보호수)
 };
 
 // Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
@@ -3692,6 +3727,7 @@ const WORKER_URL='https://weathered-bar-2c29.younrake.workers.dev';
 const ECVAM_KEY=KEYS.envgrd; // YD6X-CR5X-EJDT-V2OJ
 const ECVAM_DOMAIN='hubminyoung.github.io';
 // data.go.kr → Worker 라우트: /kma /soil-v2 /soil-v3 /airkorea /nibr /vworld-data
+// 추가 필요 라우트: /ecobank-wms (nie-ecobank.kr) /floodmap-wms (floodmap.go.kr) /gg-api (openapi.gg.go.kr)
 
 function openSettings(){
   try{
@@ -3727,8 +3763,8 @@ function saveApiKeys(){
   closeSettings();
   const toast=document.createElement('div');
   toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e8449;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;pointer-events:none;transition:opacity .4s;font-family:"Noto Sans KR",sans-serif;';
-  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr].filter(Boolean).length;
-  toast.textContent=`✅ 저장됨 — ${4+paidN}/9개 API 연결`;
+  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi].filter(Boolean).length;
+  toast.textContent=`✅ 저장됨 — ${4+paidN}/11개 API 연결`;
   document.body.appendChild(toast);
   setTimeout(()=>{toast.style.opacity='0';setTimeout(()=>document.body.removeChild(toast),400);},2000);
 }
@@ -3745,12 +3781,12 @@ function updateKeyStatus(){
 function updateHeaderApiCount(){
   const el=document.getElementById('apiConnCount');
   if(!el)return;
-  const freeCount=4; // OSM, TopoData, OpenAQ, Open-Meteo
-  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr].filter(Boolean).length;
+  const freeCount=4; // OSM, OpenAQ, Open-Meteo, Open-Meteo ERA5
+  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi].filter(Boolean).length;
   const total=freeCount+paidCount;
-  const max=9;
+  const max=11;
   el.textContent=`${total}/${max} 연결`;
-  el.style.background=paidCount>=4?'#1e8449':paidCount>=2?'#0288d1':paidCount>=1?'#0277bd':'#1e3a4f';
+  el.style.background=paidCount>=5?'#1e8449':paidCount>=3?'#0288d1':paidCount>=1?'#0277bd':'#1e3a4f';
   el.style.color=paidCount>0?'white':'#90a4ae';
 }
 
@@ -3826,13 +3862,26 @@ async function testApi(type){
       const k=encodeURIComponent(key);
       const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('경기도 양평군 양서면')}`;
       const r=await fetch(url);const text=await r.text();
-      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
+      // data.go.kr 공통 에러 패턴 (공백/언더바 양쪽 모두 체크)
+      const isAuthErr=text.includes('SERVICE_KEY')||text.includes('SERVICE KEY')||
+        text.includes('REGISTERED ERROR')||text.includes('Unexpected')||
+        text.includes('APPLICATION_KEY')||text.includes('returnAuthMsg');
+      if(isAuthErr){
         document.getElementById('status-soilrda').textContent='❌ API 키 미승인 — data.go.kr에서 흙토람 활용신청 필요';
         document.getElementById('status-soilrda').className='api-status err';
         document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
         return;
       }
       const xml=new DOMParser().parseFromString(text,'text/xml');
+      // XML resultCode 체크
+      const rc=xml.querySelector('resultCode')?.textContent||'';
+      if(rc&&rc!=='00'&&rc!=='0'){
+        const msg=xml.querySelector('resultMsg')?.textContent||rc;
+        document.getElementById('status-soilrda').textContent=`❌ API 오류 (${rc}) — ${msg}`;
+        document.getElementById('status-soilrda').className='api-status err';
+        document.getElementById('test-soilrda-status').innerHTML=`<span style="color:#ef9a9a">❌ 오류 ${rc}</span>`;
+        return;
+      }
       const items=xml.getElementsByTagName('item');
       if(items.length>0){
         const soilNm=items[0].getElementsByTagName('siltNm')[0]?.textContent||items[0].getElementsByTagName('soilType')[0]?.textContent||'토양정보';
@@ -3840,9 +3889,9 @@ async function testApi(type){
         document.getElementById('status-soilrda').className='api-status ok';
         document.getElementById('test-soilrda-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
       }else{
-        document.getElementById('status-soilrda').textContent='❌ 데이터 없음 — 키 활용승인 대기 중이거나 해당 지역 데이터 없음';
+        document.getElementById('status-soilrda').textContent='❌ 해당 지역 토양 데이터 없음 (도시화 지역은 농경지 DB 미포함) — 키 자체는 유효할 수 있음';
         document.getElementById('status-soilrda').className='api-status err';
-        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ef9a9a">❌ 데이터 없음</span>';
+        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ffb74d">⚠️ 데이터 없음</span>';
       }
     }catch(e){document.getElementById('status-soilrda').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-soilrda').className='api-status err';}
   }
@@ -3854,23 +3903,36 @@ async function testApi(type){
       const k=encodeURIComponent(key);
       const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${k}&lat=37.5665&lon=126.9780&radius=5000&pageNo=1&numOfRows=5&type=json`;
       const r=await fetch(url);const text=await r.text();
-      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
-        document.getElementById('status-nibr').textContent='❌ API 키 미승인 — data.go.kr에서 국립생물자원관 활용신청 필요';
+      const isAuthErr=text.includes('SERVICE_KEY')||text.includes('SERVICE KEY')||
+        text.includes('REGISTERED ERROR')||text.includes('Unexpected')||
+        text.includes('APPLICATION_KEY')||text.includes('returnAuthMsg');
+      if(isAuthErr){
+        document.getElementById('status-nibr').textContent='❌ API 키 미승인 — data.go.kr → 국립생물자원관 → 활용신청 필요';
         document.getElementById('status-nibr').className='api-status err';
         document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
         return;
       }
-      const d=JSON.parse(text);
-      if(d.response?.header?.resultCode==='00'){
+      let d; try{d=JSON.parse(text);}catch(pe){
+        document.getElementById('status-nibr').textContent='❌ 응답 파싱 오류 — 키 미승인 가능성 높음';
+        document.getElementById('status-nibr').className='api-status err';
+        document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 파싱 오류</span>';
+        return;
+      }
+      const rc=d.response?.header?.resultCode;
+      if(rc==='00'){
         const items=d.response?.body?.items?.item;
         const cnt=Array.isArray(items)?items.length:items?1:0;
-        document.getElementById('status-nibr').textContent=`✅ 연결 성공 — 서울 시청 반경 5km 멸종위기종 ${cnt}종`;
+        document.getElementById('status-nibr').textContent=`✅ 연결 성공 — 서울 반경 5km 멸종위기종 ${cnt}종`;
         document.getElementById('status-nibr').className='api-status ok';
         document.getElementById('test-nibr-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
       }else{
-        document.getElementById('status-nibr').textContent='❌ 응답 오류: '+d.response?.header?.resultMsg;
+        const msg=d.response?.header?.resultMsg||rc||'알 수 없음';
+        const isApproval=String(msg).includes('30')||String(msg).toUpperCase().includes('KEY');
+        document.getElementById('status-nibr').textContent=isApproval
+          ?'❌ 미승인 키 — data.go.kr에서 국립생물자원관 활용신청 필요'
+          :`❌ 응답 오류: ${msg}`;
         document.getElementById('status-nibr').className='api-status err';
-        document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 키 오류</span>';
+        document.getElementById('test-nibr-status').innerHTML=`<span style="color:#ef9a9a">❌ ${isApproval?'미승인':'오류'}</span>`;
       }
     }catch(e){document.getElementById('status-nibr').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-nibr').className='api-status err';}
   }
@@ -4355,6 +4417,53 @@ async function getRealSpeciesNIBR(c){
     }
     return null;
   }catch(e){console.warn('NIBR API 오류:',e);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 경기도 보호종/보호수 현황
+// ════════════════════════════════════════════
+function isGyeonggi(c){
+  return c.lat>=36.9&&c.lat<=38.3&&c.lng>=126.4&&c.lng<=127.9;
+}
+async function getGyeonggiProtected(c, address){
+  if(!KEYS.gyeonggi||!isGyeonggi(c)) return null;
+  try{
+    const key=encodeURIComponent(KEYS.gyeonggi);
+    // 보호종 현황 (전체 목록 — DIV_NM별 필터 가능)
+    const urlProt=`https://openapi.gg.go.kr/Protected?KEY=${key}&Type=json&pIndex=1&pSize=100&DIV_NM=포유류`;
+    const r1=await fetch(urlProt);
+    const d1=await r1.json();
+    const rows1=d1?.Protected?.[1]?.row||[];
+
+    // 시군명 추출 (주소에서)
+    const sigunMatch=address.match(/경기도\s+(\S+군|\S+시)/);
+    let rows2=[];
+    if(sigunMatch){
+      const sigunNm=sigunMatch[1];
+      const urlTree=`https://openapi.gg.go.kr/ProtectedTree?KEY=${key}&Type=json&pIndex=1&pSize=100&SIGUN_NM=${encodeURIComponent(sigunNm)}`;
+      const r2=await fetch(urlTree);
+      const d2=await r2.json();
+      rows2=d2?.ProtectedTree?.[1]?.row||[];
+    }
+
+    const species=rows1.slice(0,5).map(x=>({
+      name:x.KOR_NM||x.SCI_NM||'미상',
+      icon:'🦋',
+      status:x.DIV_NM||'경기도 보호종',
+      risk:'low'
+    }));
+    const trees=rows2.slice(0,3).map(x=>({
+      name:x.TREE_NM||'보호수',
+      icon:'🌳',
+      status:`수령 ${x.AGEYEAR||'?'}년 / ${x.DESC_NM||'보호수'}`,
+      risk:'low'
+    }));
+    const all=[...species,...trees];
+    if(all.length>0){
+      return{species:all,source:'실제 (경기도 공공데이터 — 보호종/보호수)',reliability:'real'};
+    }
+    return null;
+  }catch(e){console.warn('경기도 API 오류:',e);return null;}
 }
 
 // ════════════════════════════════════════════
