@@ -395,15 +395,6 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         </select>
       </div>
 
-      <div class="section-title" style="margin-top:12px;">🎯 설계 목적 프리셋</div>
-      <div class="presets">
-        <button class="preset-btn active" data-preset="general">🌐 일반</button>
-        <button class="preset-btn" data-preset="park">🌳 공원</button>
-        <button class="preset-btn" data-preset="waterfront">🌊 수변</button>
-        <button class="preset-btn" data-preset="plaza">🏙️ 광장</button>
-        <button class="preset-btn" data-preset="ecological">🦎 생태</button>
-      </div>
-
       <button class="btn-primary" id="analyzeBtn" onclick="runAnalysis()">
         🔍 입지 분석 시작
       </button>
@@ -748,14 +739,8 @@ function windTxt(d){
 function scoreColor(v){return v>=80?'#4fc3f7':v>=60?'#81c784':v>=40?'#ffb74d':'#ef9a9a';}
 function badge(t,c){return`<span class="badge b-${c}">${t}</span>`;}
 
-// ════════════════════════════════════════════
-// 프리셋
-// ════════════════════════════════════════════
-let preset='general';
-document.querySelectorAll('.preset-btn').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('.preset-btn').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active'); preset=b.dataset.preset;
-}));
+// 프리셋 제거 — general 고정
+const preset='general';
 
 // ════════════════════════════════════════════
 // 분석 메인
@@ -850,7 +835,7 @@ async function _doAnalysis(address, coords){
     const radius = +document.getElementById('radius').value || 500;
 
     const osmUrl = `https://overpass-api.de/api/interpreter`;
-    const topoUrl = `https://api.opentopodata.org/v1/srtm30m?locations=${coords.lat},${coords.lng}|${coords.lat+0.002},${coords.lng}|${coords.lat-0.002},${coords.lng}|${coords.lat},${coords.lng+0.002}|${coords.lat},${coords.lng-0.002}`;
+    const topoUrl = `https://api.open-meteo.com/v1/elevation?latitude=${coords.lat},${coords.lat+0.002},${coords.lat-0.002},${coords.lat},${coords.lat}&longitude=${coords.lng},${coords.lng},${coords.lng},${coords.lng+0.002},${coords.lng-0.002}`;
     const meteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,precipitation,relative_humidity_2m,apparent_temperature&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunshine_duration&timezone=Asia%2FSeoul&past_days=7&forecast_days=3`;
     const openaqUrl = `https://api.openaq.org/v3/locations?coordinates=${coords.lat},${coords.lng}&radius=30000&limit=10&parameters_id=2`;
 
@@ -1118,7 +1103,9 @@ async function _doAnalysis(address, coords){
 
     const hardiness=calcHardinessZone(coords.lat);
     const envGrade=estimateEnvGrade(ecology,landscape);
-    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade};
+    // 기후 자동분석 (ERA5 — 비동기, 실패 무시)
+    const climateSummary=await getClimateSummary(coords).catch(()=>null);
+    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,climateSummary};
     updateMap(analysisResult);
     if(heatLayer){map.removeLayer(heatLayer);heatLayer=null;}
     if(document.getElementById('l-heat')&&document.getElementById('l-heat').checked){
@@ -1399,21 +1386,78 @@ function processOSMData(osmData, c) {
 
 async function getRealElevation(c) {
   try {
-    const d = 0.002;
-    const locs = `${c.lat},${c.lng}|${c.lat+d},${c.lng}|${c.lat-d},${c.lng}|${c.lat},${c.lng+d}|${c.lat},${c.lng-d}`;
+    // Open-Meteo elevation API (SRTM90m, CORS 허용, 무료)
+    const d=0.002;
+    const lats=[c.lat,c.lat+d,c.lat-d,c.lat,c.lat].join(',');
+    const lngs=[c.lng,c.lng,c.lng,c.lng+d,c.lng-d].join(',');
     const ctrl=new AbortController();const tid=setTimeout(()=>ctrl.abort(),8000);
-    const res = await fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${locs}`,{signal:ctrl.signal});
+    const res=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lngs}`,{signal:ctrl.signal});
     clearTimeout(tid);
-    const data = await res.json();
-    if(data.results && data.results.length >= 5) {
-      const elevs = data.results.map(r => r.elevation || 0);
-      const myElev = elevs[0];
-      const maxDiff = Math.max(...elevs.slice(1).map(e => Math.abs(e - myElev)));
-      const slope = +(Math.atan(maxDiff / 200) * 180 / Math.PI).toFixed(1);
-      return { elevation: myElev, slope, source:'실제 (SRTM30m / OpenTopoData)', reliability:'real' };
+    const data=await res.json();
+    if(data.elevation && data.elevation.length>=5){
+      const elevs=data.elevation;
+      const myElev=Math.round(elevs[0]);
+      const maxDiff=Math.max(...elevs.slice(1).map(e=>Math.abs(e-myElev)));
+      const slope=+(Math.atan(maxDiff/200)*180/Math.PI).toFixed(1);
+      return{elevation:myElev,slope,source:'실제 (SRTM90m / Open-Meteo)',reliability:'real'};
     }
-  } catch(e) { console.warn('Elevation API error:', e); }
-  return { elevation: 30, slope: 2.5, source:'시뮬레이션', reliability:'simulated' };
+  }catch(e){console.warn('Elevation API error:',e);}
+  return{elevation:30,slope:2.5,source:'시뮬레이션',reliability:'simulated'};
+}
+
+// ════════════════════════════════════════════
+// 기후 자동분석 (Open-Meteo ERA5 과거 기후)
+// ════════════════════════════════════════════
+async function getClimateSummary(c){
+  try{
+    // 최근 3년 일별 데이터
+    const end=new Date();end.setDate(end.getDate()-2);
+    const start=new Date(end);start.setFullYear(start.getFullYear()-3);
+    const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}`+
+      `&start_date=${fmt(start)}&end_date=${fmt(end)}`+
+      `&daily=temperature_2m_mean,temperature_2m_min,precipitation_sum,wind_direction_10m_dominant`+
+      `&timezone=Asia%2FSeoul`;
+    const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),12000);
+    const r=await fetch(url,{signal:ctrl.signal});
+    const d=await r.json();
+    if(!d.daily||!d.daily.temperature_2m_mean) return null;
+
+    const temps=d.daily.temperature_2m_mean.filter(v=>v!=null);
+    const mins=d.daily.temperature_2m_min.filter(v=>v!=null);
+    const precips=d.daily.precipitation_sum.filter(v=>v!=null);
+    const windDirs=d.daily.wind_direction_10m_dominant;
+    const dates=d.daily.time;
+
+    // 연평균 기온
+    const annualMean=+(temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1);
+    // 연강수량 (일평균 × 365)
+    const dailyMeanPrecip=precips.reduce((a,b)=>a+b,0)/precips.length;
+    const annualPrecip=Math.round(dailyMeanPrecip*365);
+    // 극한 최저기온
+    const absMin=+Math.min(...mins).toFixed(1);
+    // 월별 강수량 집계
+    const monthlyPrecip=Array(12).fill(0).map(()=>({sum:0,cnt:0}));
+    precips.forEach((v,i)=>{if(v!=null&&dates[i]){const m=parseInt(dates[i].split('-')[1])-1;monthlyPrecip[m].sum+=v;monthlyPrecip[m].cnt++;}});
+    const mp=monthlyPrecip.map(x=>x.cnt>0?+(x.sum/x.cnt*30.4).toFixed(0):0);
+    const maxPrecipMonths=mp.map((v,i)=>({v,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
+    const precipNote=maxPrecipMonths.length>=2?`${maxPrecipMonths[0]}~${maxPrecipMonths[1]}월 집중`:'여름 집중';
+    // 계절별 주풍향 (숫자→8방위)
+    const dirName=deg=>{const dirs=['북','북동','동','남동','남','남서','서','북서'];return dirs[Math.round((deg%360)/45)%8];};
+    const seasonWinds={봄:[],여름:[],가을:[],겨울:[]};
+    (windDirs||[]).forEach((v,i)=>{
+      if(v==null||!dates[i])return;
+      const m=parseInt(dates[i].split('-')[1]);
+      if(m>=3&&m<=5)seasonWinds['봄'].push(v);
+      else if(m>=6&&m<=8)seasonWinds['여름'].push(v);
+      else if(m>=9&&m<=11)seasonWinds['가을'].push(v);
+      else seasonWinds['겨울'].push(v);
+    });
+    const domDir=arr=>{if(!arr.length)return'북서';const hist=new Float32Array(8);arr.forEach(d=>hist[Math.round((d%360)/45)%8]++);let best=0;for(let i=1;i<8;i++)if(hist[i]>hist[best])best=i;return dirName(best*45);};
+    const windSummary=Object.entries(seasonWinds).map(([s,v])=>`${s} ${domDir(v)}풍`).join(' / ');
+
+    return{annualMean,annualPrecip,absMin,precipNote,windSummary,source:'실제 (Open-Meteo ERA5 과거 3년)',reliability:'real'};
+  }catch(e){console.warn('기후 분석 오류:',e);return null;}
 }
 
 async function getRealAirQualityOAQ(c) {
@@ -2728,8 +2772,20 @@ function updateMap(d){
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
 function renderResults(d){
-  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev}=d;
+  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev,climateSummary:cs}=d;
   const sc=an.scores;
+
+  // 기후 요약 카드 HTML
+  const climateCardHtml=cs?`
+    <div class="card" style="margin-bottom:10px;border-color:#1e3a4f;">
+      <div class="card-title">🌡️ 기후 자동분석 <span style="font-size:9px;color:#546e7a;font-weight:400">${cs.source}</span></div>
+      <div style="display:flex;flex-direction:column;gap:5px;font-size:12px;">
+        <div class="data-row" style="padding:5px 0"><span class="data-key">연평균 기온</span><span class="data-val">약 ${cs.annualMean}°C</span></div>
+        <div class="data-row" style="padding:5px 0"><span class="data-key">연강수량</span><span class="data-val">약 ${cs.annualPrecip.toLocaleString()}mm (${cs.precipNote})</span></div>
+        <div class="data-row" style="padding:5px 0"><span class="data-key">계절 주풍향</span><span class="data-val" style="text-align:right">${cs.windSummary}</span></div>
+        <div class="data-row" style="padding:5px 0;border-bottom:none"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a">약 ${cs.absMin}°C</span></div>
+      </div>
+    </div>`:'';
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
     <div class="score-item">
@@ -2769,6 +2825,7 @@ function renderResults(d){
   </div>`;
 
   const html=`
+    ${climateCardHtml}
     <!-- 🗺️ 입지 타입 판정 카드 -->
     <div class="stype-card">
       <div class="stype-title">🗺️ 입지 타입 판정 <span style="font-size:10px;color:#546e7a;font-weight:400">— 규제→물리→생태→위험→도시맥락 종합</span></div>
@@ -2971,7 +3028,7 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName}역)</span></div>
         <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses}개소</span></div>
         <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds.toLocaleString()}명 (${trf.pedLv})</span></div>
+        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds.toLocaleString()}명 (${trf.pedLv}) <span style="color:#546e7a;font-size:10px;">추정</span></span></div>
         <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}</span></div>
         ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
         ${[...urb.implications,...trf.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
@@ -3111,7 +3168,7 @@ async function downloadPDF(){
 
       <!-- 주소 & 종합점수 -->
       <div style="background:#e3f2fd;border-left:4px solid #0288d1;padding:12px 16px;margin-bottom:20px;border-radius:4px">
-        <div style="font-size:13px;color:#546e7a;margin-bottom:2px">분석 주소 · 반경 ${d.radius}m · 프리셋: ${d.preset}</div>
+        <div style="font-size:13px;color:#546e7a;margin-bottom:2px">분석 주소 · 반경 ${d.radius}m</div>
         <div style="font-size:16px;font-weight:700;color:#0d47a1">${d.address}</div>
         <div style="font-size:11px;color:#78909c;margin-top:2px">${d.coords.name}</div>
       </div>
@@ -3711,9 +3768,9 @@ async function testApi(type){
   else if(type==='topo'){
     setStatus('test-topo-status','<div>⏳ 테스트 중…</div>','#78909c');
     try{
-      const r=await fetch('https://api.opentopodata.org/v1/srtm30m?locations=37.5665,126.9780');
+      const r=await fetch('https://api.open-meteo.com/v1/elevation?latitude=37.5665&longitude=126.9780');
       const d=await r.json();
-      const elev=d.results&&d.results[0]?d.results[0].elevation:'?';
+      const elev=d.elevation&&d.elevation[0]!=null?Math.round(d.elevation[0]):'?';
       setStatus('test-topo-status',`<div style="color:#81c784">✅ 고도 ${elev}m 응답</div><button onclick="testApi('topo')" style="margin-top:4px;background:#1e3a4f;border:none;border-radius:4px;padding:2px 8px;color:#90a4ae;font-size:10px;cursor:pointer;">재테스트</button>`,'#81c784');
     }catch(e){setStatus('test-topo-status','<div style="color:#ef9a9a">❌ 연결 실패</div>','#ef9a9a');}
   }
@@ -3732,9 +3789,15 @@ async function testApi(type){
     document.getElementById('status-kma').textContent='⏳ 연결 테스트 중…';document.getElementById('status-kma').className='api-status idle';
     try{
       const now=new Date();const pad=n=>String(n).padStart(2,'0');
-      const baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
+      // 동적 base_time: 발표 후 10분 이후 시각 기준
+      const hrs=[2,5,8,11,14,17,20,23];
+      const nowMin=now.getHours()*60+now.getMinutes();
+      const validIdx=hrs.map(h=>h*60+10).filter(t=>t<=nowMin).length-1;
+      let baseDate,baseH;
+      if(validIdx<0){const yd=new Date(now);yd.setDate(yd.getDate()-1);baseDate=`${yd.getFullYear()}${pad(yd.getMonth()+1)}${pad(yd.getDate())}`;baseH=23;}
+      else{baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;baseH=hrs[validIdx];}
       const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=0600&nx=61&ny=126`;
+      const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=${pad(baseH)}00&nx=61&ny=126`;
       const r=await fetch(url);const text=await r.text();
       if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
         document.getElementById('status-kma').textContent='❌ API 키 미승인 — data.go.kr에서 기상자료개방포털 활용신청 필요';
@@ -3874,35 +3937,47 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
-    // JSONP로 CORS 우회 (GitHub Pages 포함 모든 도메인에서 동작)
-    const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&data=LT_C_UQ111&key=${KEYS.vworld}&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
-    const d=await(await fetch(url)).json();
-    if(d.response&&d.response.status==='OK'&&d.response.result&&d.response.result.featureCollection){
-      const features=d.response.result.featureCollection.features;
-      if(features&&features.length>0){
-        const props=features[0].properties;
-        // 용도지역 코드 → 이름 매핑
-        const zoneMap={
-          '주거지역':'주거지역','전용주거지역':'전용주거지역','일반주거지역':'일반주거지역',
-          '준주거지역':'준주거지역','상업지역':'상업지역','중심상업지역':'중심상업지역',
-          '일반상업지역':'일반상업지역','근린상업지역':'근린상업지역','유통상업지역':'유통상업지역',
-          '공업지역':'공업지역','전용공업지역':'전용공업지역','일반공업지역':'일반공업지역',
-          '준공업지역':'준공업지역','녹지지역':'녹지지역','보전녹지지역':'보전녹지지역',
-          '생산녹지지역':'생산녹지지역','자연녹지지역':'자연녹지지역','관리지역':'관리지역',
-          '농림지역':'농림지역','자연환경보전지역':'자연환경보전지역'
-        };
-        const rawZone=props.UQ111_UQ111NM||props.PRPOS_AREA_DSTRC_NM||props.LGL_EMD_NM||'';
-        const zone=rawZone||'확인필요';
-        // 용적률·건폐율 표준값 매핑
-        const fsrMap={'중심상업지역':1500,'일반상업지역':1300,'근린상업지역':900,'유통상업지역':1100,
-          '준주거지역':500,'일반주거지역(3종)':300,'일반주거지역(2종)':250,'일반주거지역(1종)':200,
-          '전용주거지역':100,'공업지역':400,'준공업지역':400,'녹지지역':100};
-        const fsr=fsrMap[zone]||200;
-        return {zone,fsr,bcr:zone.includes('상업')?80:zone.includes('공업')?70:60,
-          source:'실제 (브이월드 국토부)',reliability:'real',raw:props};
+    // 용도지역 (LT_C_UQ111) + 용도구역-개발제한구역 (LT_C_UQ113) 병렬 조회
+    const baseUrl=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    const [r1,r2]=await Promise.allSettled([
+      fetch(baseUrl+'&data=LT_C_UQ111').then(r=>r.json()),
+      fetch(baseUrl+'&data=LT_C_UQ113').then(r=>r.json()),
+    ]);
+    let zone='확인필요', greenbelt=false;
+
+    // 용도지역
+    if(r1.status==='fulfilled'){
+      const d=r1.value;
+      if(d.response?.status==='OK'){
+        const features=d.response?.result?.featureCollection?.features||[];
+        if(features.length>0){
+          const props=features[0].properties;
+          zone=props.UQ111_UQ111NM||props.PRPOS_AREA_DSTRC_NM||'확인필요';
+        }
       }
     }
-    return null;
+    // 개발제한구역 (용도구역)
+    if(r2.status==='fulfilled'){
+      const d=r2.value;
+      if(d.response?.status==='OK'){
+        const features=d.response?.result?.featureCollection?.features||[];
+        greenbelt=features.length>0; // 레이어 피처 있으면 개발제한구역 안
+      }
+    }
+
+    const fsrMap={'중심상업지역':1500,'일반상업지역':1300,'근린상업지역':900,'유통상업지역':1100,
+      '준주거지역':500,'일반주거지역(3종)':300,'일반주거지역(2종)':250,'일반주거지역(1종)':200,
+      '전용주거지역':100,'공업지역':400,'준공업지역':400,'녹지지역':100,'자연녹지지역':100,
+      '보전녹지지역':80,'생산녹지지역':100,'농림지역':80,'자연환경보전지역':80};
+    const fsr=fsrMap[zone]||200;
+    const restr=[];
+    if(greenbelt) restr.push('개발제한구역(그린벨트)');
+    const imp=[];
+    if(greenbelt) imp.push('🚫 개발제한구역 — 건축 제한, 녹지·보전용도 한정');
+    if(zone.includes('상업')) imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
+    return{zone,fsr,bcr:zone.includes('상업')?80:zone.includes('공업')?70:60,
+      greenbelt,restr,implications:imp,
+      source:'실제 (브이월드 국토부 LT_C_UQ111+UQ113)',reliability:'real'};
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
 }
 
@@ -4360,8 +4435,8 @@ async function getRealAir(c){
     <div class="api-group" style="border-color:#1e8449;padding:10px 14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <div>
-          <div class="api-group-title" style="color:#81c784;margin-bottom:2px;">⛰️ Open-Topo-Data (SRTM30m)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">실제 고도·경사도 데이터</div>
+          <div class="api-group-title" style="color:#81c784;margin-bottom:2px;">⛰️ Open-Meteo Elevation (SRTM90m)</div>
+          <div class="api-group-desc" style="margin-bottom:0;">고도·경사도 실측 — CORS 지원, 키 불필요</div>
         </div>
         <div id="test-topo-status" style="font-size:10px;color:#81c784;text-align:right;flex-shrink:0;">
           <div>● 자동 연결</div>
@@ -4373,21 +4448,8 @@ async function getRealAir(c){
     <div class="api-group" style="border-color:#1e8449;padding:10px 14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <div>
-          <div class="api-group-title" style="color:#81c784;margin-bottom:2px;">💨 OpenAQ — 국제 대기질</div>
-          <div class="api-group-desc" style="margin-bottom:0;">PM2.5 실측 (한국 측정소 포함)</div>
-        </div>
-        <div id="test-openaq-status" style="font-size:10px;color:#81c784;text-align:right;flex-shrink:0;">
-          <div>● 자동 연결</div>
-          <button onclick="testApi('openaq')" style="margin-top:4px;background:#1e3a4f;border:none;border-radius:4px;padding:2px 8px;color:#90a4ae;font-size:10px;cursor:pointer;">테스트</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="api-group" style="border-color:#1e8449;padding:10px 14px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div class="api-group-title" style="color:#81c784;margin-bottom:2px;">🌤️ Open-Meteo — 기상</div>
-          <div class="api-group-desc" style="margin-bottom:0;">기온·풍속·강수·일조 실시간</div>
+          <div class="api-group-title" style="color:#81c784;margin-bottom:2px;">🌤️ Open-Meteo — 기상 + 기후(ERA5)</div>
+          <div class="api-group-desc" style="margin-bottom:0;">실시간 기상 · 과거 3년 기후 자동분석 (연평균기온·연강수량·계절풍향·극한기온)</div>
         </div>
         <div style="font-size:10px;color:#81c784;">● 자동 연결</div>
       </div>
