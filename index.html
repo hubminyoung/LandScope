@@ -3824,7 +3824,7 @@ async function testApi(type){
     document.getElementById('status-soilrda').textContent='⏳ 연결 테스트 중…';document.getElementById('status-soilrda').className='api-status idle';
     try{
       const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('서울특별시 강남구')}`;
+      const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('경기도 양평군 양서면')}`;
       const r=await fetch(url);const text=await r.text();
       if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
         document.getElementById('status-soilrda').textContent='❌ API 키 미승인 — data.go.kr에서 흙토람 활용신청 필요';
