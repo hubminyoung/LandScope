@@ -1030,17 +1030,33 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://open-meteo.com/',verifyLabel:'Open-Meteo 문서'});
     }
 
-    // ── 흙토람 토양 (키 있을 때) ──
+    // ── 흙토람 토양 V3 PNU 기반 (키 있을 때) ──
     const realSoil = await getRealSoilRDA(coords, address);
     if(realSoil){
-      soil.soil_type=realSoil.soil_type;
-      soil.ph=realSoil.ph; soil.om=realSoil.om;
+      // V3: texture(표토토성), drainage(배수등급), depth(유효토심), geography(분포지형) 등
+      if(realSoil.texture) soil.soil_type=realSoil.texture;
       if(realSoil.drainage) soil.drainage=realSoil.drainage;
+      // 유효토심 코드 → effectiveDepth (cm 중간값)
+      if(realSoil.depthCd){
+        const depthNum={'01':12,'02':37,'03':75,'04':120}[realSoil.depthCd];
+        if(depthNum) soil.effectiveDepth=depthNum;
+      }
+      // V3 전용 필드 추가 저장
+      soil.geography=realSoil.geography||'—';
+      soil.accumulation=realSoil.accumulation||'—';
+      soil.matrix=realSoil.matrix||'—';
+      soil.mainLanduse=realSoil.mainLanduse||'—';
+      soil.depthLabel=realSoil.depth||'—';
       soil.source=realSoil.source; soil.reliability=realSoil.reliability;
-      dataLog.push({category:'토양/지질 (흙토람)',icon:'🪨',api:'흙토람 농촌진흥청 RDA (키 필요)',
-        url:'https://apis.data.go.kr/1390802/ScilInfrInfo/getScilInfrInfo',
-        note:`주소 기반 토양 정보 조회 (XML 응답)`,
-        values:`토양유형 ${realSoil.soil_type} / pH ${realSoil.ph} / 유기물 ${realSoil.om}% / 배수 ${realSoil.drainage||'미확인'}`,
+      // 임플리케이션 갱신 (유효토심 기반)
+      if(soil.effectiveDepth<25&&!soil.implications.some(i=>i.includes('유효토심'))){
+        soil.implications.push(`🪨 유효토심 매우얕음(${soil.effectiveDepth}cm) → 심근성 교목 불가·생육기반 조성 필수`);
+      }
+      const drainLogMap={'매우양호':'매우양호(Well drained)','양호':'양호','약간양호':'약간양호','약간불량':'약간불량(습윤)','불량':'불량(습해 위험)','매우불량':'매우불량(상시 과습)'};
+      dataLog.push({category:'토양/지질 (흙토람 V3)',icon:'🪨',api:'흙토람 농촌진흥청 RDA V3 · PNU 기반',
+        url:'https://apis.data.go.kr/1390802/SoilEnviron/SoilCharac/V3/getSoilCharacter',
+        note:`PNU(${realSoil.pnu||'—'}) 기반 토양 27종 특성 조회`,
+        values:`표토토성 ${realSoil.texture||'—'} / 배수 ${realSoil.drainage||'—'} / 유효토심 ${realSoil.depth||'—'} / 분포지형 ${realSoil.geography||'—'} / 퇴적양식 ${realSoil.accumulation||'—'}`,
         status:'real',verifyUrl:'https://soil.rda.go.kr/soil/',verifyLabel:'흙토람 직접 확인'});
     }
 
@@ -1059,6 +1075,34 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://species.nibr.go.kr/',verifyLabel:'국립생물자원관 확인'});
     }
     
+    // ── 생태자연도 실제 등급 조회 (PNU → emdCd 8자리) ──
+    if(pnu){
+      const ecoReal=await fetchEcoGrade(pnu);
+      if(ecoReal&&ecoReal.grade){
+        const gradeLabels={1:'1등급(최우수)',2:'2등급(우수)',3:'3등급(양호)'};
+        const gradeColors={1:'#1a5276',2:'#1e8449',3:'#d4ac0d'};
+        ecology.grade=ecoReal.grade;
+        ecology.grade_text=gradeLabels[ecoReal.grade]||ecology.grade_text;
+        ecology.grade_color=gradeColors[ecoReal.grade]||ecology.grade_color;
+        if(ecoReal.vtnGrade) ecology.vtnGrade=ecoReal.vtnGrade;
+        if(ecoReal.ampltGrade) ecology.ampltGrade=ecoReal.ampltGrade;
+        if(ecoReal.plntCln) ecology.plntCln=ecoReal.plntCln;
+        ecology.source='실제 (OSM + 생태자연도 국립생태원)';
+        ecology.reliability='real';
+        // 1등급이면 보전 임플리케이션 강화
+        if(ecoReal.grade===1&&!ecology.implications.some(i=>i.includes('1등급'))){
+          ecology.implications.unshift('🔴 생태자연도 1등급 — 원칙적 개발 불가·환경영향평가 필수');
+        } else if(ecoReal.grade===2&&!ecology.implications.some(i=>i.includes('2등급'))){
+          ecology.implications.unshift('🟡 생태자연도 2등급 — 개발 최소화·생태 완충녹지 확보');
+        }
+        dataLog.push({category:'생태자연도 (국립생태원)',icon:'🌿',api:'생태자연도 EcologyzmpService (키 필요)',
+          url:'https://apis.data.go.kr/B553084/ecoapi/EcologyzmpService/attr/getEcologyzmpAttr',
+          note:`읍면동코드(${ecoReal.emdCd}) 기반 생태자연도 속성 조회`,
+          values:`생태자연도 ${ecoReal.grade}등급 / 식생평가 ${ecoReal.vtnGrade||'—'}등급 / 동식물 ${ecoReal.ampltGrade||'—'}등급 / 식물군락 ${ecoReal.plntCln||'—'}`,
+          status:'real',verifyUrl:'https://www.nie.re.kr/',verifyLabel:'국립생태원 확인'});
+      }
+    }
+
     await sleep(300);
     const analysis = analyze(ecology,weather,soil,air,urban,traffic,social,water,landscape,preset);
     const performance = buildPerformance(weather,landscape,water,ecology,social,traffic,air,soil,radius);
@@ -1357,7 +1401,9 @@ async function getRealElevation(c) {
   try {
     const d = 0.002;
     const locs = `${c.lat},${c.lng}|${c.lat+d},${c.lng}|${c.lat-d},${c.lng}|${c.lat},${c.lng+d}|${c.lat},${c.lng-d}`;
-    const res = await fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${locs}`);
+    const ctrl=new AbortController();const tid=setTimeout(()=>ctrl.abort(),8000);
+    const res = await fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${locs}`,{signal:ctrl.signal});
+    clearTimeout(tid);
     const data = await res.json();
     if(data.results && data.results.length >= 5) {
       const elevs = data.results.map(r => r.elevation || 0);
@@ -3688,10 +3734,17 @@ async function testApi(type){
       const now=new Date();const pad=n=>String(n).padStart(2,'0');
       const baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
       const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/kma/VilageFcstInfoService2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=0600&nx=61&ny=126`;
-      const r=await fetch(url);const d=await r.json();
+      const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=0600&nx=61&ny=126`;
+      const r=await fetch(url);const text=await r.text();
+      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
+        document.getElementById('status-kma').textContent='❌ API 키 미승인 — data.go.kr에서 기상자료개방포털 활용신청 필요';
+        document.getElementById('status-kma').className='api-status err';
+        document.getElementById('test-kma-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
+        return;
+      }
+      const d=JSON.parse(text);
       if(d.response?.header?.resultCode==='00'){
-        const t=d.response?.body?.items?.item?.find(x=>x.category==='T1H');
+        const t=d.response?.body?.items?.item?.find(x=>x.category==='TMP'||x.category==='T1H');
         document.getElementById('status-kma').textContent=`✅ 연결 성공 — 서울 기온: ${t?t.fcstValue+'°C':'조회됨'}`;
         document.getElementById('status-kma').className='api-status ok';
         document.getElementById('test-kma-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
@@ -3710,15 +3763,21 @@ async function testApi(type){
       const k=encodeURIComponent(key);
       const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('서울특별시 강남구')}`;
       const r=await fetch(url);const text=await r.text();
+      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
+        document.getElementById('status-soilrda').textContent='❌ API 키 미승인 — data.go.kr에서 흙토람 활용신청 필요';
+        document.getElementById('status-soilrda').className='api-status err';
+        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
+        return;
+      }
       const xml=new DOMParser().parseFromString(text,'text/xml');
       const items=xml.getElementsByTagName('item');
       if(items.length>0){
-        const soilNm=items[0].getElementsByTagName('siltNm')[0]?.textContent||'토양정보';
+        const soilNm=items[0].getElementsByTagName('siltNm')[0]?.textContent||items[0].getElementsByTagName('soilType')[0]?.textContent||'토양정보';
         document.getElementById('status-soilrda').textContent=`✅ 연결 성공 — 토양: ${soilNm}`;
         document.getElementById('status-soilrda').className='api-status ok';
         document.getElementById('test-soilrda-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
       }else{
-        document.getElementById('status-soilrda').textContent='❌ 데이터 없음 (키 신청 상태 확인)';
+        document.getElementById('status-soilrda').textContent='❌ 데이터 없음 — 키 활용승인 대기 중이거나 해당 지역 데이터 없음';
         document.getElementById('status-soilrda').className='api-status err';
         document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ef9a9a">❌ 데이터 없음</span>';
       }
@@ -3731,7 +3790,14 @@ async function testApi(type){
     try{
       const k=encodeURIComponent(key);
       const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${k}&lat=37.5665&lon=126.9780&radius=5000&pageNo=1&numOfRows=5&type=json`;
-      const r=await fetch(url);const d=await r.json();
+      const r=await fetch(url);const text=await r.text();
+      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
+        document.getElementById('status-nibr').textContent='❌ API 키 미승인 — data.go.kr에서 국립생물자원관 활용신청 필요';
+        document.getElementById('status-nibr').className='api-status err';
+        document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
+        return;
+      }
+      const d=JSON.parse(text);
       if(d.response?.header?.resultCode==='00'){
         const items=d.response?.body?.items?.item;
         const cnt=Array.isArray(items)?items.length:items?1:0;
@@ -3876,16 +3942,54 @@ async function fetchMceeLC(lat,lng){
 
 // PNU(필지고유번호) 추출 — VWorld 필지경계 레이어
 async function fetchPNU(lat,lng){
-  if(!KEYS.vworld)return null;
   try{
-    const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LP_PA_CBND_BUBUN&key=${KEYS.vworld}&format=json&geomFilter=POINT(${lng}%20${lat})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
-    const d=await vworldJsonp(url);
+    const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&data=LP_PA_CBND_BUBUN&format=json&geomFilter=POINT(${lng}%20${lat})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
+    const d=await(await fetch(url)).json();
     if(d&&d.response&&d.response.status==='OK'){
       const f=d.response.result?.featureCollection?.features?.[0];
       return f?.properties?.PNU||f?.properties?.pnu||null;
     }
   }catch(e){console.warn('fetchPNU 오류:',e);}
   return null;
+}
+
+// ════════════════════════════════════════════
+// 생태자연도 속성조회 (국립생태원 B553084)
+// emdCd = PNU 앞 8자리 (시도2+시군구3+읍면동3)
+// resultCode '0' = 정상
+// ════════════════════════════════════════════
+async function fetchEcoGrade(pnu){
+  if(!pnu||pnu.length<8) return null;
+  try{
+    const emdCd=pnu.substring(0,8);
+    const key=encodeURIComponent(KEYS.nibr||KEYS.kma||'');
+    if(!key||key==='') return null;
+    const url=`${WORKER_URL}/ecomap/attr/getEcologyzmpAttr?serviceKey=${key}&numOfRows=20&pageNo=1&type=json&emdCd=${emdCd}`;
+    const r=await fetch(url);
+    const text=await r.text();
+    if(text.includes('Unexpected')||text.includes('SERVICE_KEY')||text.includes('DENIED')) return null;
+    const d=JSON.parse(text);
+    const rc=String(d.response?.header?.resultCode||'');
+    if(rc!=='0'&&rc!=='00') return null;
+    const raw=d.response?.body?.items?.item;
+    const arr=Array.isArray(raw)?raw:raw?[raw]:[];
+    if(!arr.length) return null;
+    // 1등급이 최우선 보전 — 가장 엄격한 등급 반환
+    const grades=arr.map(x=>parseInt(x.eczmGr)||9).filter(n=>n<=3);
+    const minGrade=grades.length?Math.min(...grades):null;
+    const topItem=arr.find(x=>parseInt(x.eczmGr)===minGrade)||arr[0];
+    return{
+      grade:minGrade,
+      vtnGrade:parseInt(topItem.vtnEvlGr)||null,
+      ampltGrade:parseInt(topItem.ampltEvlGr)||null,
+      smldGrade:parseInt(topItem.smldEvlGr)||null,
+      tpgGrade:parseInt(topItem.tpgEvlGr)||null,
+      plntCln:topItem.plntClnNm||'',
+      emdCd,
+      source:'실제 (생태자연도 · 국립생태원 B553084)',
+      reliability:'real'
+    };
+  }catch(e){console.warn('생태자연도 조회 실패:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
@@ -3973,38 +4077,103 @@ async function getRealKMAWeather(c){
   }catch(e){console.warn('Open-Meteo 오류:',e);return null;}
 }
 
-// KMA 단기예보 (기상청 data.go.kr — localhost 등록 필요)
+// KMA 단기예보 (기상청 data.go.kr)
+// 발표시각: 0200,0500,0800,1100,1400,1700,2000,2300 — 발표 후 10분 이후 호출 가능
 async function getRealKMAWeatherKMA(c){
   if(!KEYS.kma) return null;
   try{
     const now=new Date();
     const pad=n=>String(n).padStart(2,'0');
-    const baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
+    const nowMin=now.getHours()*60+now.getMinutes();
+    // 각 발표시각(분)+10분 이후에 사용 가능
     const hrs=[2,5,8,11,14,17,20,23];
-    const curH=now.getHours();
-    const baseH=hrs.filter(h=>h<=curH).pop()||23;
+    const validMins=hrs.map(h=>h*60+10); // 130,310,490,...
+    const validIdx=validMins.filter(t=>t<=nowMin).length-1;
+
+    let baseDate,baseH;
+    if(validIdx<0){
+      // 오늘 첫 발표(02:10)도 안 됐으면 전날 23시
+      const yd=new Date(now); yd.setDate(yd.getDate()-1);
+      baseDate=`${yd.getFullYear()}${pad(yd.getMonth()+1)}${pad(yd.getDate())}`;
+      baseH=23;
+    }else{
+      baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
+      baseH=hrs[validIdx];
+    }
     const baseTime=`${pad(baseH)}00`;
     const {nx,ny}=latLngToKMAGrid(c.lat,c.lng);
     const key=encodeURIComponent(KEYS.kma);
-    // ✅ 수정: VilageFcstInfoService_2.0 (언더스코어 필수)
-    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=100&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
+    // numOfRows=290: 발표당 최대 약 290개 (시간별 요소 × 예보시간)
+    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=290&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
     const r=await fetch(url);
-    const d=await r.json();
-    if(d.response?.header?.resultCode!=='00'){
-      console.warn('KMA resultCode:', d.response?.header?.resultCode, d.response?.header?.resultMsg);
+    const text=await r.text();
+    if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
+      console.warn('KMA API 키 미승인 — data.go.kr 활용신청 필요');
+      return null;
+    }
+    const d=JSON.parse(text);
+    const rc=d.response?.header?.resultCode;
+    if(rc!=='00'){
+      console.warn('KMA resultCode:',rc, d.response?.header?.resultMsg);
       return null;
     }
     const items=d.response?.body?.items?.item||[];
-    const get=(cat)=>{const f=items.find(x=>x.category===cat);return f?+f.fcstValue:null;};
-    const T1H=get('TMP'),WSD=get('WSD'),REH=get('REH'),VEC=get('VEC'),PTY=get('PTY'),SKY=get('SKY');
-    if(T1H===null) return null;
+    if(!items.length) return null;
+
+    // 현재 시각과 가장 가까운 예보 시각 매칭
+    const todayStr=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
+    const curMins=now.getHours()*60+now.getMinutes();
+    const getNearestNow=(cat)=>{
+      const catItems=items.filter(x=>x.category===cat);
+      if(!catItems.length) return null;
+      // 오늘 날짜 중 현재 시각에 가장 가까운 것
+      let best=null,bestDiff=Infinity;
+      for(const it of catItems){
+        const fcstH=parseInt(it.fcstTime.substring(0,2));
+        const fcstMin=fcstH*60;
+        const diff=Math.abs(fcstMin-curMins);
+        if(it.fcstDate===todayStr&&diff<bestDiff){bestDiff=diff;best=it;}
+      }
+      if(!best) best=catItems[0]; // 오늘 데이터 없으면 첫번째
+      return isNaN(+best.fcstValue)?best.fcstValue:+best.fcstValue;
+    };
+    const getAny=(cat)=>{
+      const it=items.find(x=>x.category===cat);
+      return it?(isNaN(+it.fcstValue)?it.fcstValue:+it.fcstValue):null;
+    };
+
+    const TMP=getNearestNow('TMP');
+    const WSD=getNearestNow('WSD');
+    const REH=getNearestNow('REH');
+    const VEC=getNearestNow('VEC');
+    const PTY=getNearestNow('PTY');
+    const SKY=getNearestNow('SKY');
+    const POP=getNearestNow('POP');
+    // 일 최고/최저기온
+    const TMX=getAny('TMX');
+    const TMN=getAny('TMN');
+
+    if(TMP===null) return null;
     const skyText={1:'맑음',3:'구름많음',4:'흐림'}[SKY]||'흐림';
+    const ptyText={0:'없음',1:'비',2:'비/눈',3:'눈',4:'소나기'}[PTY||0]||'없음';
+
     return{
-      temperature:T1H, feels_like:+(T1H-1.5).toFixed(1), humidity:REH||60,
-      wind_speed:WSD||0, wind_direction:VEC||0, wind_direction_text:windTxt(VEC||0),
-      precipitation:PTY>0?1:0, temp_max:T1H+3, temp_min:T1H-5,
-      avg_precip:PTY>0?2:0, avg_sun:SKY===1?8:SKY===3?5:3,
-      sky:skyText, source:`실제 (기상청 KMA 단기예보 · 격자${nx},${ny})`, reliability:'real'
+      temperature:TMP,
+      feels_like:+(TMP-1.5).toFixed(1),
+      humidity:REH||60,
+      wind_speed:WSD||0,
+      wind_direction:VEC||0,
+      wind_direction_text:windTxt(VEC||0),
+      precipitation:PTY>0?1:0,
+      precipType:ptyText,
+      pop:POP||0,
+      temp_max:TMX!=null?TMX:TMP+3,
+      temp_min:TMN!=null?TMN:TMP-5,
+      avg_precip:PTY>0?2:0,
+      avg_sun:SKY===1?8:SKY===3?5:3,
+      sky:skyText,
+      source:`실제 (기상청 KMA 단기예보 · 격자(${nx},${ny}) · ${baseDate} ${baseTime} 발표)`,
+      reliability:'real'
     };
   }catch(e){console.warn('KMA API 오류:',e.message);return null;}
 }
@@ -4014,60 +4183,75 @@ async function getRealKMAWeatherKMA(c){
 // ════════════════════════════════════════════
 async function getRealSoilRDA(coords, address){
   if(!KEYS.soilrda) return null;
-  // 시도: 토양도 기반 토양특성 상세 정보 V3
   const key=encodeURIComponent(KEYS.soilrda);
-  const addr=encodeURIComponent((address||'').replace(/\s+/g,' ').trim());
 
-  // V3 좌표 기반 엔드포인트 시도
-  const endpoints=[
-    `${WORKER_URL}/soil-v3?serviceKey=${key}&numOfRows=5&pageNo=1&lat=${coords.lat}&lon=${coords.lng}`,
-    `${WORKER_URL}/soil-v3?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
-    `${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
-    // 구 엔드포인트 (V1 폴백)
-    `${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`,
-  ];
+  // 배수등급 코드표
+  const drainMap={'01':'매우양호','02':'양호','03':'약간양호','04':'약간불량','05':'불량','06':'매우불량','99':'기타'};
+  // 유효토심 코드표
+  const depthMap={'01':'매우얕음(0-25cm)','02':'얕음(25-50cm)','03':'보통(50-100cm)','04':'깊음(100cm+)','99':'기타'};
+  // 표토토성 코드표
+  const textureMap={'01':'양질조사토','02':'양질세사토','03':'양질사토','04':'세사양토','05':'사양토','06':'양토','07':'미사질양토','08':'미사질식양토','09':'식양토','99':'기타'};
+  // 분포지형 코드표
+  const geoMap={'01':'산악지','02':'구릉지','03':'산록경사지','04':'곡간지/선상지','05':'해성평탄지','06':'하성평탄지','07':'고원지','08':'홍적대지','09':'용암류대지','10':'용암류평탄','99':'기타'};
+  // 퇴적양식 코드표
+  const accumMap={'01':'충적층','02':'홍적층','03':'충적붕적층','04':'붕적층','05':'잔적층','99':'기타'};
+  // 모암 코드표
+  const matrixMap={'01':'산성암','02':'중성암','03':'염기성암','04':'퇴적암','05':'변성암','06':'제3기층','07':'제4기층','08':'화산회','99':'기타'};
+  // 주토지이용 코드표
+  const landMap={'01':'논','02':'밭','03':'과수/상전','04':'초지','05':'임지','99':'기타'};
 
-  for(const url of endpoints){
-    try{
+  // ① V3: PNU 코드 기반 (정확도 최고)
+  try{
+    const pnu=await fetchPNU(coords.lat, coords.lng);
+    if(pnu){
+      const url=`${WORKER_URL}/soil-v3?serviceKey=${key}&PNU_CD=${pnu}`;
       const r=await fetch(url);
       const text=await r.text();
-      // JSON 우선 시도
-      let data=null;
-      try{data=JSON.parse(text);}catch(_){}
-      if(data){
-        const items=data.response?.body?.items?.item;
-        const item=Array.isArray(items)?items[0]:items;
-        if(item){
-          const soil_type=item.soilType||item.siltNm||item.scilNm||item.textureClass||'';
-          const ph=parseFloat(item.pH60||item.ph||item.phWater||0);
-          const om=parseFloat(item.orgMatCn||item.organicMatter||item.om||0);
-          const drainage=item.drngClsNm||item.drainageClass||item.drainage||'';
-          if(soil_type||ph){
-            console.log('✅ 흙토람 JSON 성공:', url);
-            return{soil_type:soil_type||'미확인',ph:ph||6.0,om:om||1.5,drainage:drainage||'보통',
-              source:'실제 (흙토람 농촌진흥청 V3)',reliability:'real'};
-          }
+      if(!text.includes('Unexpected')&&!text.includes('KEY_AUTH')){
+        const xml=new DOMParser().parseFromString(text,'text/xml');
+        const rc=xml.getElementsByTagName('Result_Code')[0]?.textContent;
+        if(rc==='200'){
+          const g=tag=>{const el=xml.getElementsByTagName(tag)[0];return el?el.textContent.trim():'';};
+          const drain=drainMap[g('Soildra_Cd')]||g('Soildra_Cd');
+          const depth=depthMap[g('Vldsoildep_Cd')]||g('Vldsoildep_Cd');
+          const texture=textureMap[g('Surtture_Cd')]||g('Surtture_Cd');
+          const geo=geoMap[g('Soil_Type_Geo_Cd')]||g('Soil_Type_Geo_Cd');
+          const accum=accumMap[g('Accu_Style_Cd')]||g('Accu_Style_Cd');
+          const matrix=matrixMap[g('Matrix_Cd')]||g('Matrix_Cd');
+          const land=landMap[g('Main_Landuse_Cd')]||g('Main_Landuse_Cd');
+          const depthCd=g('Vldsoildep_Cd');
+          console.log('✅ 흙토람 V3 PNU 성공 PNU='+pnu);
+          return{
+            drainage:drain, depth:depth, depthCd:depthCd,
+            texture:texture, geography:geo, accumulation:accum,
+            matrix:matrix, mainLanduse:land, pnu:pnu,
+            source:'실제 (흙토람 V3 · PNU 기반)', reliability:'real'
+          };
         }
       }
-      // XML 파싱
-      const parser=new DOMParser();
-      const xml=parser.parseFromString(text,'text/xml');
-      const xmlItems=xml.getElementsByTagName('item');
-      if(xmlItems.length>0){
-        const item=xmlItems[0];
-        const get=tag=>{const el=item.getElementsByTagName(tag)[0];return el?el.textContent.trim():'';};
-        const soil_type=get('soilType')||get('siltNm')||get('scilNm')||get('textureClass');
-        const ph=parseFloat(get('pH60')||get('ph')||get('phWater')||'0');
-        const om=parseFloat(get('orgMatCn')||get('organicMatter')||get('om')||'0');
-        const drainage=get('drngClsNm')||get('drainageClass')||get('drainage');
-        if(soil_type||ph){
-          console.log('✅ 흙토람 XML 성공:', url);
-          return{soil_type:soil_type||'미확인',ph:ph||6.0,om:om||1.5,drainage:drainage||'보통',
-            source:'실제 (흙토람 농촌진흥청)',reliability:'real'};
-        }
+    }
+  }catch(e){console.warn('흙토람 V3 실패:',e.message);}
+
+  // ② V2 폴백: 주소 기반
+  try{
+    const addr=encodeURIComponent((address||'').replace(/\s+/g,' ').trim());
+    const url=`${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`;
+    const r=await fetch(url);
+    const text=await r.text();
+    if(text.includes('Unexpected')||text.includes('KEY_AUTH')) return null;
+    const xml=new DOMParser().parseFromString(text,'text/xml');
+    const items=xml.getElementsByTagName('item');
+    if(items.length>0){
+      const item=items[0];
+      const g=tag=>{const el=item.getElementsByTagName(tag)[0];return el?el.textContent.trim():'';};
+      const drain=g('drngClsNm')||g('drainageClass')||'';
+      const texture=g('siltNm')||g('soilType')||g('textureClass')||'';
+      if(drain||texture){
+        return{drainage:drain,texture:texture,depth:'—',geography:'—',accumulation:'—',matrix:'—',mainLanduse:'—',
+          source:'실제 (흙토람 V2)',reliability:'partial'};
       }
-    }catch(e){console.warn('흙토람 시도 실패:', url.split('?')[0], e.message);}
-  }
+    }
+  }catch(e){console.warn('흙토람 V2 실패:',e.message);}
   return null;
 
 }
