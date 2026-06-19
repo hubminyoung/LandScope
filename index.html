@@ -4276,4 +4276,22 @@ async function getRealAir(c){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
         <div>
           <div class="api-group-title">🦎 국립생물자원관 (NIBR)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">반경 5km 멸종위기종 실제 분포 · <a class="api-link" href="https://www.data.go.kr/data/15122312/openapi.do" tar
+          <div class="api-group-desc" style="margin-bottom:0;">반경 5km 멸종위기종 실제 분포 · <a class="api-link" href="https://www.data.go.kr/data/15122312/openapi.do" target="_blank">키 신청 (무료)</a></div>
+        </div>
+        <div id="test-nibr-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input class="api-input" id="key-nibr" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
+        <button onclick="testApi('nibr')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
+      </div>
+      <div class="api-status idle" id="status-nibr" style="margin-top:4px;">⬡ 미설정 — 시뮬레이션 사용 중 (키 입력 시 실제 멸종위기종 데이터로 업그레이드)</div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:16px;">
+      <button onclick="closeSettings()" style="flex:1;padding:10px;background:#1a2a3a;border:1px solid #37474f;border-radius:8px;color:#90a4ae;font-size:13px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;">닫기</button>
+      <button onclick="saveApiKeys()" style="flex:2;padding:10px;background:#0288d1;border:none;border-radius:8px;color:white;font-size:13px;font-weight:700;cursor:pointer;font-family:'Noto Sans KR',sans-serif;">✅ 저장</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
