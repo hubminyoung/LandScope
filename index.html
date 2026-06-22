@@ -1730,8 +1730,6 @@ function buildTraffic(c,osm,realBus,sgisPop){
   else if(subDist<600)imp.push('🚇 역 근접 → 보행 동선 연계 권장');
   if(bike)imp.push('🚲 자전거도로 연계 가능');
   if(buses!=null&&buses>5)imp.push(`🚌 버스 접근성 양호 (${buses}개 정류장)`);
-  const relSub=osm&&osm.nearestStation?'real':'estimated';
-  const relBus=busSource==='real_api'?'real':busSource==='osm'?'real':'unknown';
   // 보행량: SGIS 생활인구(낮 체류) 사용 — 없으면 null
   const peds=sgisPop?.livingPopDay??null;
   const pedLv=peds==null?'데이터 미연동':peds>20000?'매우 높음':peds>8000?'높음':peds>2000?'보통':'낮음';
