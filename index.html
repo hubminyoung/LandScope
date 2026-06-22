@@ -4264,13 +4264,15 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
-    const baseUrl=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    // VWorld Data API — JSONP 직접 호출 (Worker 불필요, 사용자 키 그대로 사용)
+    // Worker 경유 시 하드코딩 키로 대체되는 버그 회피
+    const base=`https://api.vworld.kr/req/data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
     // UQ111 용도지역, UQ112 용도지구(문화재/최고고도/경관지구 등), UQ113 용도구역(개발제한), NSR001 자연공원
     const [r1,r2,r3,r4]=await Promise.allSettled([
-      fetch(baseUrl+'&data=LT_C_UQ111').then(r=>r.json()),
-      fetch(baseUrl+'&data=LT_C_UQ112').then(r=>r.json()),
-      fetch(baseUrl+'&data=LT_C_UQ113').then(r=>r.json()),
-      fetch(baseUrl+'&data=LT_C_NSR001').then(r=>r.json()),
+      vworldJsonp(base+'&data=LT_C_UQ111'),
+      vworldJsonp(base+'&data=LT_C_UQ112'),
+      vworldJsonp(base+'&data=LT_C_UQ113'),
+      vworldJsonp(base+'&data=LT_C_NSR001'),
     ]);
 
     let zone='확인필요', greenbelt=false;
