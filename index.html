@@ -687,7 +687,12 @@ function generateHeatData(lat,lng,eco,lsc,water){
   const pts=[];
   const step=0.0015; // ~150m 격자
   const range=7;     // 7칸 = ~1km 반경
-  const nearHan=(lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20);
+  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
+const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
+  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
+  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
+  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
+));
   for(let dlat=-range;dlat<=range;dlat++){
     for(let dlng=-range;dlng<=range;dlng++){
       const plat=lat+dlat*step;
@@ -981,7 +986,7 @@ async function _doAnalysis(address, coords){
     }
 
     document.getElementById('loadingStep').textContent=STEPS[6];
-    const traffic = buildTraffic(coords, osm, realBus);
+    const traffic = buildTraffic(coords, osm, realBus, sgisPop);
 
     // ── 데이터 로그: 교통 ──
     const busSource=realBus?`data.go.kr 버스API (${realBus.count}개)`:osm&&osm.nearestStation?'OpenStreetMap':'시뮬레이션';
@@ -1171,10 +1176,41 @@ async function _doAnalysis(address, coords){
     btn.disabled=false;
 
     const hardiness=calcHardinessZone(coords.lat);
-    const envGrade=estimateEnvGrade(ecology,landscape);
+
+    // ── 4대 필수 항목: 국토환경성평가·토지피복·겨울철새 병렬 조회 ──
+    document.getElementById('loadingStep').textContent='국토환경성·토지피복·겨울철새 데이터 조회 중…';
+    const [envGradeRealR, landcoverR] = await Promise.allSettled([
+      getRealEnvGrade(coords),
+      getRealLandcover(coords),
+    ]);
+    const envGradeReal = envGradeRealR.value||null;
+    const landcover    = landcoverR.value||null;
+    const winterBirds  = getWinterBirds(coords); // 동기 (내장 DB)
+    const envGrade     = envGradeReal || estimateEnvGrade(ecology,landscape);
+
+    // dataLog에 4대 항목 추가
+    dataLog.push({category:'국토환경성평가지도',icon:'🗺️',
+      api:envGradeReal?'ECVAM WMS GetFeatureInfo (neins.go.kr)':'추정 (생태자연도·비오톱 기반)',
+      note:envGradeReal?`ECVAM lt_c_enveval_res 레이어 포인트 조회`:'실 API 미연동 — 생태등급 기반 추정',
+      values:`국토환경성 ${envGrade.grade||'?'}등급 — ${envGrade.label||''}`,
+      status:envGradeReal?'real':'simulated',
+      verifyUrl:'https://www.neins.go.kr/gep/cr/gis/gis01.do',verifyLabel:'국토환경성평가지도 확인'});
+    dataLog.push({category:'토지피복지도',icon:'🏞️',
+      api:landcover?'환경부 EGIS WMS GetFeatureInfo (egis.me.go.kr)':'미조회',
+      note:landcover?`EGIS me:LCODE_A 레이어 포인트 조회`:'EGIS GetFeatureInfo 미연동',
+      values:landcover?`${landcover.code} ${landcover.name}`:'조회 필요',
+      status:landcover?'real':'simulated',
+      verifyUrl:'https://egis.me.go.kr/',verifyLabel:'환경공간정보서비스 확인'});
+    dataLog.push({category:'겨울철새 도래현황',icon:'🦢',
+      api:'환경부 주요 겨울철새 도래지 DB (내장)',
+      note:`반경 15km 이내 도래지 ${winterBirds.nearby.length}개소`,
+      values:`도래 가능성 ${winterBirds.probability}${winterBirds.nearby.length?` / 최근접: ${winterBirds.nearby[0].name} (${winterBirds.nearby[0].d}m)`:''}`,
+      status:winterBirds.nearby.length?'partial':'simulated',
+      verifyUrl:'https://www.nie.re.kr/',verifyLabel:'국립생태원 확인'});
+
     // 기후 자동분석 (ERA5 — 비동기, 실패 무시)
     const climateSummary=await getClimateSummary(coords).catch(()=>null);
-    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,climateSummary};
+    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,climateSummary};
     updateMap(analysisResult);
     if(heatLayer){map.removeLayer(heatLayer);heatLayer=null;}
     if(document.getElementById('l-heat')&&document.getElementById('l-heat').checked){
@@ -1399,7 +1435,9 @@ function processOSMData(osmData, c) {
 
   nodes.forEach(n => {
     const t = n.tags;
-    if(t.railway && ['station','subway_entrance'].includes(t.railway)) stationNodes.push(n);
+    // subway_entrance는 이름이 없으면 제외 — 이름 있는 station 우선
+    if(t.railway==='station') stationNodes.push(n);
+    else if(t.railway==='subway_entrance'&&(t.name||t['name:ko'])) stationNodes.push(n);
     if(t.highway==='bus_stop') busNodes.push(n);
   });
 
@@ -1416,8 +1454,12 @@ function processOSMData(osmData, c) {
   const permeable = Math.max(0, 100 - naturalPct - waterPct - artificialGreen - impervious);
   const bar = +Math.min(0.95, (naturalPct*1.0 + waterPct*1.0 + artificialGreen*0.7 + permeable*0.5) / 100).toFixed(2);
 
+  // 대하천 인접(강 폭 way로 검색됨) → 수변생태지 = 습지 준용
+  if(hasMajorRiver && waterRatio > 0.05) hasWetland = true;
+
   let ecoGrade;
   if(hasWetland && greenRatio > 0.3) ecoGrade = 1;
+  else if(hasMajorRiver && greenRatio > 0.2) ecoGrade = 2; // 대하천 수변 녹지
   else if(hasNaturalWood && greenRatio > 0.25) ecoGrade = 2;
   else if(greenRatio > 0.12 || hasMajorRiver) ecoGrade = 3;
   else if(buildingRatio > 0.4) ecoGrade = 5;
@@ -1661,7 +1703,7 @@ function buildUrban(c,osm){
     source:osm?'실제 (OpenStreetMap 토지이용)':'미확인 (VWorld 키 필요)',
     reliability:osm?'partial':'unknown'};
 }
-function buildTraffic(c,osm,realBus){
+function buildTraffic(c,osm,realBus,sgisPop){
   const rng=seededRng(c.lat,c.lng,4);
   let subDist,subName,buses,busSource;
   if(osm&&osm.nearestStation){
@@ -1690,7 +1732,16 @@ function buildTraffic(c,osm,realBus){
   if(buses!=null&&buses>5)imp.push(`🚌 버스 접근성 양호 (${buses}개 정류장)`);
   const relSub=osm&&osm.nearestStation?'real':'estimated';
   const relBus=busSource==='real_api'?'real':busSource==='osm'?'real':'unknown';
-  return{subDist,subName,buses,busSource,bike,acc,peds:null,pedLv:'데이터 미연동',implications:imp,
+  // 보행량: SGIS 생활인구(낮 체류) 사용 — 없으면 null
+  const peds=sgisPop?.livingPopDay??null;
+  const pedLv=peds==null?'데이터 미연동':peds>20000?'매우 높음':peds>8000?'높음':peds>2000?'보통':'낮음';
+  if(peds!=null){
+    if(peds>10000)imp.push('👥 보행량 많음 → 휴식공간·가로수길 우선');
+    if(peds<1000)imp.push('🌿 조용한 입지 → 생태·명상 테마 공간 최적');
+  }
+  const relSub=osm&&osm.nearestStation?'real':'estimated';
+  const relBus=busSource==='real_api'?'real':busSource==='osm'?'real':'unknown';
+  return{subDist,subName,buses,busSource,bike,acc,peds,pedLv,implications:imp,
     source:relSub==='real'?'실제 (OSM 지하철 + 버스API)':'추정 (내장 역 좌표)',
     reliability:relSub==='real'&&relBus==='real'?'real':relSub==='real'?'partial':'estimated'};
 }
@@ -1736,7 +1787,12 @@ function buildLandscape(c,osm){const rng=seededRng(c.lat,c.lng,8);const bar=osm?
 function getEcology(c){
   const {lat,lng}=c;
   const rng=seededRng(lat,lng,1);
-  const nearHan=(lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20);
+  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
+const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
+  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
+  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
+  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
+));
 
   let minD=999999,nearNode=null;
   ECO_NODES.forEach(n=>{const d=dist(lat,lng,n.lat,n.lng);if(d<minD){minD=d;nearNode=n;}});
@@ -1806,7 +1862,12 @@ function getAir(c){
 
 function getWater(c){
   const {lat,lng}=c; const rng=seededRng(lat,lng,7);
-  const nearHan=(lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20);
+  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
+const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
+  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
+  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
+  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
+));
 
   let floodRisk,wqGrade,impRatio,annualPrecip,landslideRisk;
   if(nearHan){
@@ -2064,7 +2125,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     principle:'바람길 축 보존: 주풍향에 직교하는 차폐 배치와 유도 배치를 구분하여 설계',
     example:`${wx.wind_direction_text} 방향 상록 교목 차폐열식 / 바람통로 축 내 개방 수공간 / 그늘막 방향 조정`});
   if(trf.subDist<500)ins.push({icon:'🚇',title:'역세권 활성화 연계',
-    reason:`${trf.subName}역 ${trf.subDist}m · 일평균 보행 ${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 — 높은 유동인구 잠재력`,
+    reason:`${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'} ${trf.subDist}m · 일평균 보행 ${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 — 높은 유동인구 잠재력`,
     principle:'역세권 연계 보행 네트워크: 역 출구에서 공원 진입까지 끊김 없는 보행축 형성',
     example:'역 방향 광장 진입부 설치 / 보행 지붕형 캐노피 / 이정표 및 야간 경관 조명'});
   if(eco.nearHan)ins.push({icon:'🌊',title:'수변 생태 네트워크',
@@ -2939,7 +3000,7 @@ function updateMap(d){
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
 function renderResults(d){
-  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev,climateSummary:cs}=d;
+  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,elev,climateSummary:cs}=d;
   const sc=an.scores;
 
   // 기후 요약 카드 HTML
@@ -3129,21 +3190,45 @@ function renderResults(d){
       <div class="tab-content active" id="tab-anomaly"><div class="anomaly-list">${anomalyHtml}</div></div>
 
       <div class="tab-content" id="tab-eco">
-        <div class="data-row"><span class="data-key">생태자연도</span><span class="data-val" style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span></div>
+        <!-- ① 생태자연도 상세정보 (항상 표시) -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 생태자연도 상세정보 ──</div>
+        <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val" style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span></div>
+        ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a">—</span></div>`}
+        ${eco.ampltGrade?`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val">${eco.ampltGrade}등급</span></div>`:`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val" style="color:#546e7a">—</span></div>`}
+        ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a">—</span></div>`}
+        <div class="source-row">${eco.reliability==='real'?'● 실제 (국립생태원 B553084)':'⬡ '+eco.source}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- ② 국토환경성평가지도 (항상 표시) -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 국토환경성평가지도 ──</div>
+        <div class="data-row"><span class="data-key">국토환경성 등급</span><span class="data-val">${evg?badge(evg.label,evg.badgeColor):badge('미조회','grey')}</span></div>
+        ${evg?`<div style="font-size:10px;color:#78909c;padding:2px 0 4px">${evg.note}</div>`:''}
+        <div class="source-row">${evg?.reliability==='real'?'● 실제 (ECVAM WMS)':'⬡ 추정 (생태등급 기반)'}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- ③ 토지피복지도 (항상 표시) -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지피복지도 ──</div>
+        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.name} (코드: ${lc.code})`:badge('미조회 — 환경부 EGIS','grey')}</span></div>
+        ${lc?.isWater?`<div style="font-size:11px;color:#4fc3f7;padding:2px 0">💧 수계 지역 — 수질보전 및 친수공간 계획 검토</div>`:''}
+        ${lc?.isEco?`<div style="font-size:11px;color:#a5d6a7;padding:2px 0">🌿 녹지/산림 — 생태계 보전 또는 녹지 활용 가능</div>`:''}
+        <div class="source-row">${lc?'● 실제 (환경부 EGIS WMS)':'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- ④ 겨울철새 도래현황 (항상 표시) -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 겨울철새 도래현황 ──</div>
+        <div class="data-row"><span class="data-key">도래 가능성</span><span class="data-val">${wb?badge(wb.probability,wb.probability==='높음'?'red':wb.probability==='보통'?'yellow':'grey'):badge('분석불가','grey')}</span></div>
+        ${wb?.nearby?.length?`<div class="data-row"><span class="data-key">인근 도래지</span><span class="data-val" style="font-size:11px">${wb.nearby.slice(0,2).map(s=>`${s.name} (${s.d}m)`).join('<br>')}</span></div>`:'<div class="data-row"><span class="data-key">인근 도래지</span><span class="data-val" style="color:#546e7a">15km 이내 주요 도래지 없음</span></div>'}
+        ${wb?.repSpecies?.length?`<div class="data-row"><span class="data-key">주요 종</span><span class="data-val" style="font-size:11px">${wb.repSpecies.join(' · ')}</span></div>`:''}
+        ${wb?.notice?.length?wb.notice.map(n=>`<div style="font-size:11px;color:#ffcc80;padding:2px 0">⚠️ ${n}</div>`).join(''):''}
+        <div class="source-row">⬡ ${wb?wb.source:'미분석'}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- 기타 생태 정보 -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 녹지 · 서식환경 ──</div>
         <div class="data-row"><span class="data-key">수목 피복률</span><span class="data-val">${eco.treeCov}%</span></div>
         <div class="data-row"><span class="data-key">습지 존재</span><span class="data-val">${eco.hasWetland?badge('있음','green'):badge('없음','grey')}</span></div>
-        <div class="data-row"><span class="data-key">수변 인접</span><span class="data-val">${eco.nearHan?badge('한강 인접','blue'):'없음'}</span></div>
+        <div class="data-row"><span class="data-key">수변 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):'없음'}</span></div>
         ${eco.nearNodeName?`<div class="data-row"><span class="data-key">인접 생태 거점</span><span class="data-val">${eco.nearNodeName} (${eco.nearNodeDist}m)</span></div>`:''}
         <div class="data-row" style="flex-direction:column;align-items:flex-start;gap:6px;"><span class="data-key">서식 생물</span>${specHtml}</div>
         ${eco.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 환경 · 제약 ──</div>
-        <div class="data-row"><span class="data-key">국토환경성등급</span><span class="data-val">${evg?badge(evg.label,evg.badgeColor):'—'}</span></div>
-        ${evg?`<div style="font-size:10px;color:#78909c;padding:2px 0 4px">${evg.note}</div>`:''}
         ${eco.nearHan||water.floodRisk==='높음'?`<div class="data-row"><span class="data-key">상수원 보호구역</span><span class="data-val"><span style="color:#ef9a9a;font-size:11px">⚠️ 수계 인접 — 확인 필요</span></span></div>`:''}
-        ${eco.nearHan?`<div class="data-row"><span class="data-key">특이사항</span><span class="data-val" style="font-size:11px;line-height:1.5;color:#ffcc80">겨울철새 도래지 가능성<br>야간조명·매립형 수경시설 제한 검토</span></div>`:''}
         ${(urb.restr&&urb.restr.length)?`<div class="data-row"><span class="data-key">법적 규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
-        <div class="source-row">⬡ ${eco.source}</div>
       </div>
 
       <div class="tab-content" id="tab-climate">
@@ -3192,10 +3277,10 @@ function renderResults(d){
       <div class="tab-content" id="tab-urban">
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}</span></div>
         <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
-        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName}역)</span></div>
+        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'})</span></div>
         <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소':badge('미연동','grey')}</span></div>
         <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">보행량</span><span class="data-val">${badge('SGIS 키 필요','grey')} <a href="https://sgis.kostat.go.kr/" target="_blank" style="color:#546e7a;font-size:10px;">발급</a></span></div>
+        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds!=null?`${trf.peds.toLocaleString()}명 (SGIS 생활인구 낮) — ${trf.pedLv}`:badge('SGIS 미연동','grey')}</span></div>
         <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}</span></div>
         ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
         ${[...urb.implications,...trf.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
@@ -3482,7 +3567,7 @@ async function downloadPDF(){
             ['PM2.5',`${air.pm25}㎍/㎥ (${air.pm25g})`,'방진 녹지 계획'],
             ['소음',`${air.noise}dB (${air.noiseg})`,'방음식재 계획'],
             ['용도지역',urb.zone,'개발 가능 범위'],
-            ['지하철 거리',`${trf.subDist}m (${trf.subName}역)`,'접근성 판단'],
+            ['지하철 거리',`${trf.subDist}m (${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'})`,'접근성 판단'],
             ['일평균 보행량',`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 (${trf.pedLv})`,'이용 수요'],
           ].map((r,i)=>`<tr style="background:${i%2?'#f5f5f5':'#fff'}">
             <td style="padding:6px 10px;color:#546e7a;font-weight:500">${r[0]}</td>
@@ -3764,6 +3849,10 @@ const ECO_NODES=[
   // 수도권
   {lat:37.719,lng:126.767,grade:1,name:'한북정맥 생태 보전축'},{lat:37.282,lng:127.057,grade:2,name:'광교산 생태자연도'},
   {lat:37.624,lng:127.163,grade:2,name:'불암산 생태자연도'},{lat:37.453,lng:126.623,grade:1,name:'강화 갯벌 람사르'},
+  // 한강 상류·경기 양평 일대
+  {lat:37.530,lng:127.449,grade:2,name:'양수리 남·북한강 합류 수변생태지'},{lat:37.545,lng:127.487,grade:2,name:'양평 남한강 수변 생태축'},
+  {lat:37.530,lng:127.369,grade:1,name:'팔당 상수원 보호구역'},{lat:37.558,lng:127.340,grade:2,name:'운길산 수종사 생태자연도'},
+  {lat:37.493,lng:127.490,grade:2,name:'양평 친환경 농업단지 생태녹지'},{lat:37.536,lng:127.607,grade:2,name:'용문산 생태자연도'},
   // 강원
   {lat:38.119,lng:128.465,grade:1,name:'설악산 국립공원 핵심구역'},{lat:37.747,lng:128.566,grade:1,name:'오대산 국립공원'},
   {lat:37.332,lng:128.456,grade:1,name:'치악산 국립공원'},{lat:38.600,lng:128.200,grade:1,name:'DMZ 생태 완충지대'},
@@ -3807,6 +3896,12 @@ const SUBWAY=[
   {name:'수원',lat:37.266,lng:127.000},{name:'분당',lat:37.370,lng:127.115},{name:'판교',lat:37.395,lng:127.111},
   {name:'일산',lat:37.662,lng:126.770},{name:'안양',lat:37.392,lng:126.955},{name:'성남',lat:37.436,lng:127.138},
   {name:'의정부',lat:37.738,lng:127.044},{name:'인덕원',lat:37.389,lng:126.985},{name:'청량리',lat:37.580,lng:127.047},
+  // 경의중앙선·중앙선 (양수리·팔당·양평 방면)
+  {name:'양수',lat:37.531,lng:127.447},{name:'신원',lat:37.511,lng:127.425},{name:'국수',lat:37.545,lng:127.477},
+  {name:'아신',lat:37.560,lng:127.499},{name:'양평',lat:37.492,lng:127.494},{name:'용문',lat:37.536,lng:127.617},
+  {name:'팔당',lat:37.531,lng:127.369},{name:'운길산',lat:37.558,lng:127.339},{name:'도심',lat:37.566,lng:127.314},
+  {name:'덕소',lat:37.566,lng:127.297},{name:'도농',lat:37.601,lng:127.171},{name:'양정',lat:37.595,lng:127.154},
+  {name:'구리',lat:37.598,lng:127.130},{name:'화랑대',lat:37.617,lng:127.099},
   // 지방 KTX/주요역 (지하철 없는 도시 fallback)
   {name:'광명',lat:37.479,lng:126.867},{name:'천안아산',lat:36.798,lng:127.104},{name:'오송',lat:36.624,lng:127.306},
   {name:'공주',lat:36.447,lng:127.128},{name:'익산',lat:35.952,lng:126.957},{name:'전주',lat:35.818,lng:127.154},
@@ -4708,59 +4803,93 @@ async function getRealNoise(c){
 // ════════════════════════════════════════════
 async function getSgisPopulation(c){
   if(!KEYS.sgis) return null;
+  // SGIS는 CORS 차단 → Cloudflare Worker /sgis 경유 필수
+  const W=WORKER_URL; // 예: https://weathered-bar-2c29.younrake.workers.dev
   try{
-    // 1단계: 액세스 토큰 발급 (consumer_key = consumer_secret = 발급키)
-    const tokenUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/auth/authentication.json`+
+    // 1단계: 액세스 토큰 발급
+    const tokenUrl=`${W}/sgis/OpenAPI3/auth/authentication.json`+
       `?consumer_key=${KEYS.sgis}&consumer_secret=${KEYS.sgis}`;
-    const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(6000)});
+    const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(8000)});
     const td=await tr.json();
-    if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패:',td.errMsg);return null;}
+    if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패(errCd='+td.errCd+'):',td.errMsg);return null;}
     const token=td.result.accessToken;
+    console.log('✅ SGIS 토큰 발급 성공');
 
-    // 2단계: 좌표 → 행정동 코드 (geocoding)
-    const gcUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/addr/geocodingFull.json`+
-      `?accessToken=${token}&address=${c.lat},${c.lng}&x_coor=${c.lng}&y_coor=${c.lat}&addr_type=20`;
-    const gcr=await fetch(gcUrl,{signal:AbortSignal.timeout(5000)});
+    // 2단계: 좌표 → 행정동 코드
+    const gcUrl=`${W}/sgis/OpenAPI3/addr/geocodingFull.json`+
+      `?accessToken=${token}&x_coor=${c.lng}&y_coor=${c.lat}&addr_type=20`;
+    const gcr=await fetch(gcUrl,{signal:AbortSignal.timeout(6000)});
     const gcd=await gcr.json();
     let admCd='';
     if(gcd.errCd===0&&gcd.result?.resultdata?.length>0){
       admCd=gcd.result.resultdata[0].adm_cd||'';
+      console.log('✅ SGIS geocoding 성공, adm_cd=',admCd);
     }
 
-    // 3단계: 행정동 기반 인구 조회 (2020 인구총조사)
+    // 3단계: 행정동 기반 인구 조회
     if(admCd){
-      const popUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/stat/popltn.json`+
+      const popUrl=`${W}/sgis/OpenAPI3/stat/popltn.json`+
         `?accessToken=${token}&year=2020&adm_cd=${admCd}&low_search=0`;
-      const pr=await fetch(popUrl,{signal:AbortSignal.timeout(5000)});
+      const pr=await fetch(popUrl,{signal:AbortSignal.timeout(6000)});
       const pd=await pr.json();
       if(pd.errCd===0&&pd.result?.length>0){
         const r=pd.result[0];
         const totPop=parseInt(r.tot_ppltn||r.ppltn_cnt||'0');
-        const area=parseFloat(r.area||'0');     // km²
+        const area=parseFloat(r.area||'0');
         const popD=area>0?Math.round(totPop/area):null;
         const aged65=r.aged_65_ppltn_rt!=null?parseFloat(r.aged_65_ppltn_rt):null;
         const adm_nm=r.adm_nm||admCd;
         if(totPop>0){
+          console.log('✅ SGIS 인구 조회 성공:',totPop,'명');
           return{popD,totPop,aged65Pct:aged65,admNm:adm_nm,
             source:'실제 (통계청 SGIS 2020 인구총조사)',reliability:'real'};
         }
       }
     }
 
-    // fallback: 격자 인구 (adm_cd 실패 시)
-    const gridUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/stat/gridpop.json`+
+    // fallback: 격자 인구
+    const gridUrl=`${W}/sgis/OpenAPI3/stat/gridpop.json`+
       `?accessToken=${token}&year=2020&lat=${c.lat}&lng=${c.lng}&radius=500`;
-    const gpr=await fetch(gridUrl,{signal:AbortSignal.timeout(5000)});
+    const gpr=await fetch(gridUrl,{signal:AbortSignal.timeout(6000)});
     const gpd=await gpr.json();
     if(gpd.errCd===0&&gpd.result){
       const totPop=parseInt(gpd.result.tot_ppltn||'0');
       if(totPop>0){
-        return{popD:null,totPop,aged65Pct:null,admNm:'반경 500m',
+        console.log('✅ SGIS 격자인구 성공:',totPop,'명');
+        // 격자인구 취득 시 생활인구(낮 체류)도 같이 시도
+        let livingPop=null;
+        try{
+          const lvUrl=`${W}/sgis/OpenAPI3/stat/livingpopltn.json`+
+            `?accessToken=${token}&year=2023&month=06&day_cde=1&time_cde=1300&lat=${c.lat}&lng=${c.lng}&radius=500`;
+          const lvr=await fetch(lvUrl,{signal:AbortSignal.timeout(5000)});
+          const lvd=await lvr.json();
+          if(lvd.errCd===0&&lvd.result?.tot_lvpop_cnt!=null){
+            livingPop=parseInt(lvd.result.tot_lvpop_cnt);
+            console.log('✅ SGIS 생활인구(낮):',livingPop,'명');
+          }
+        }catch(_){}
+        return{popD:null,totPop,livingPopDay:livingPop,aged65Pct:null,admNm:'반경 500m',
           source:'실제 (통계청 SGIS 격자인구 2020)',reliability:'real'};
       }
     }
+
+    // 최후 fallback: 토큰만 성공, 인구 없음 → 생활인구만 시도
+    try{
+      const lvUrl=`${W}/sgis/OpenAPI3/stat/livingpopltn.json`+
+        `?accessToken=${token}&year=2023&month=06&day_cde=1&time_cde=1300&lat=${c.lat}&lng=${c.lng}&radius=500`;
+      const lvr=await fetch(lvUrl,{signal:AbortSignal.timeout(5000)});
+      const lvd=await lvr.json();
+      if(lvd.errCd===0&&lvd.result?.tot_lvpop_cnt!=null){
+        const livingPop=parseInt(lvd.result.tot_lvpop_cnt);
+        console.log('✅ SGIS 생활인구만 성공:',livingPop,'명');
+        return{popD:null,totPop:null,livingPopDay:livingPop,aged65Pct:null,admNm:'반경 500m',
+          source:'실제 (통계청 SGIS 생활인구 2023)',reliability:'real'};
+      }
+    }catch(_){}
+
+    console.warn('SGIS: 토큰은 발급됐지만 인구 데이터 없음');
     return null;
-  }catch(e){console.warn('SGIS API 오류:',e);return null;}
+  }catch(e){console.warn('SGIS API 오류:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
@@ -4808,6 +4937,131 @@ async function getGyeonggiProtected(c, address){
     }
     return null;
   }catch(e){console.warn('경기도 API 오류:',e);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 국토환경성평가지도 — ECVAM WMS GetFeatureInfo
+// 키: KEYS.envgrd (YD6X-CR5X-EJDT-V2OJ), Worker /ecvam 경유
+// ════════════════════════════════════════════
+async function getRealEnvGrade(c){
+  if(!KEYS.envgrd) return null;
+  try{
+    const d=0.0008; // ~80m bbox
+    const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
+    const url=`${WORKER_URL}/ecvam?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+      `&LAYERS=lt_c_enveval_res&QUERY_LAYERS=lt_c_enveval_res`+
+      `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
+      `&INFO_FORMAT=application/json&APIKEY=${KEYS.envgrd}&DOMAIN=hubminyoung.github.io`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
+    const text=await r.text();
+    if(!text||text.trim().startsWith('<')) return null; // HTML error → null
+    const d2=JSON.parse(text);
+    const features=d2.features||d2.featureInfo?.features||[];
+    if(!features.length) return null;
+    const props=features[0].properties||features[0];
+    const gradeNum=parseInt(props.ENVEV_GRD||props.GRD||props.grade||props.GRD_CD||'0');
+    if(!gradeNum||gradeNum<1||gradeNum>5) return null;
+    const labels=['','1등급(보전최우선)','2등급(보전)','3등급(보전관리)','4등급(개발관리)','5등급(개발가능)'];
+    const bcs  =['','red','red','yellow','blue','grey'];
+    const notes=['',
+      '자연환경보전법 §34 — 원칙적 개발 불가, 생태면적률 90% 이상',
+      '개발사업 원칙 불허, 생태·자연경관 보전 조치 필요',
+      '사업 규모 제한, 환경영향평가 협의 필요',
+      '개발 허용, 친환경 설계 권고',
+      '개발 가능, 법정 기준 준수'];
+    console.log('✅ ECVAM 환경성평가 등급:',gradeNum,'등급');
+    return{grade:gradeNum,label:labels[gradeNum],badgeColor:bcs[gradeNum],note:notes[gradeNum],
+      source:'실제 (국토환경성평가지도 ECVAM)',reliability:'real'};
+  }catch(e){console.warn('ECVAM GetFeatureInfo 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 환경부 EGIS 토지피복도 — WMS GetFeatureInfo
+// Worker /egis 경유 (CORS 우회)
+// ════════════════════════════════════════════
+async function getRealLandcover(c){
+  try{
+    const d=0.0008;
+    const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
+    const url=`${WORKER_URL}/egis?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+      `&LAYERS=me:LCODE_A&QUERY_LAYERS=me:LCODE_A`+
+      `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
+      `&INFO_FORMAT=application/json`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
+    const text=await r.text();
+    if(!text||text.trim().startsWith('<')) return null;
+    const d2=JSON.parse(text);
+    const features=d2.features||[];
+    if(!features.length) return null;
+    const props=features[0].properties||features[0];
+    // EGIS 중분류 토지피복: LNLC_CD, LNLC_NM or CLS_NM
+    const code=String(props.LNLC_CD||props.lnlc_cd||props.CODE||'');
+    const name=props.LNLC_NM||props.lnlc_nm||props.CLS_NM||props.cls_nm||'';
+    if(!name&&!code) return null;
+    // 생태 관련 분류
+    const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
+    const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호');
+    console.log('✅ 토지피복:',code,name);
+    return{code,name,isEco:eco,isWater:water,
+      source:'실제 (환경부 EGIS 중분류 토지피복도)',reliability:'real'};
+  }catch(e){console.warn('토지피복도 GetFeatureInfo 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// 겨울철새 도래현황 — 주요도래지 DB + nearHan 판단
+// ════════════════════════════════════════════
+const WINTER_BIRD_SITES=[
+  // 한강 수계
+  {name:'양수리 남·북한강 합류 철새도래지',lat:37.530,lng:127.449,species:['큰고니','원앙','청둥오리','비오리'],grade:1},
+  {name:'팔당호 겨울철새 도래지',lat:37.531,lng:127.369,species:['큰고니','가창오리','흰뺨검둥오리'],grade:1},
+  {name:'한강 하구 재두루미 도래지',lat:37.677,lng:126.612,species:['재두루미','저어새','흰목물떼새'],grade:1},
+  {name:'강화 매화마름 생태공원',lat:37.625,lng:126.465,species:['흑두루미','개리','큰고니'],grade:1},
+  {name:'밤섬 겨울철새 서식지',lat:37.527,lng:126.928,species:['흰뺨검둥오리','비오리','댕기흰죽지'],grade:1},
+  {name:'암사동 한강 습지',lat:37.551,lng:127.144,species:['황오리','원앙','청둥오리'],grade:2},
+  // 서해안
+  {name:'천수만 가창오리 도래지',lat:36.640,lng:126.540,species:['가창오리','큰기러기','쇠기러기'],grade:1},
+  {name:'낙동강 하구 을숙도',lat:35.088,lng:128.944,species:['흑두루미','큰고니','노랑부리저어새'],grade:1},
+  {name:'순천만 국가정원 철새도래지',lat:34.880,lng:127.501,species:['흑두루미','재두루미','개리'],grade:1},
+  {name:'금강 하구 서천갯벌',lat:36.001,lng:126.721,species:['가창오리','검은머리물떼새'],grade:1},
+  // 내륙
+  {name:'철원 두루미 도래지',lat:38.140,lng:127.313,species:['두루미(천연기념물)','재두루미'],grade:1},
+  {name:'인천 남동유수지',lat:37.385,lng:126.720,species:['저어새','알락꼬리마도요'],grade:1},
+  {name:'시화호 철새도래지',lat:37.317,lng:126.717,species:['큰고니','큰기러기','황오리'],grade:1},
+  {name:'제주 성산 도래지',lat:33.457,lng:126.925,species:['물수리','황새','큰고니'],grade:2},
+  // 경기 양평 일대
+  {name:'양평 두물머리 수변',lat:37.530,lng:127.430,species:['원앙','큰고니','청둥오리'],grade:2},
+  {name:'운길산역 북한강 수변',lat:37.558,lng:127.340,species:['원앙','비오리'],grade:2},
+];
+
+function getWinterBirds(c){
+  // 반경 내 도래지 탐색
+  const nearby=WINTER_BIRD_SITES
+    .map(s=>({...s,d:Math.round(dist(c.lat,c.lng,s.lat,s.lng))}))
+    .filter(s=>s.d<15000) // 15km 이내
+    .sort((a,b)=>a.d-b.d)
+    .slice(0,3);
+
+  // nearHan 범위 내(한강 수계)면 도래 가능성 높음
+  const nearHan=((c.lat>37.35&&c.lat<37.70&&c.lng>126.60&&c.lng<127.60)&&(
+    (c.lat>37.49&&c.lat<37.56&&c.lng>126.82&&c.lng<127.20)||
+    (c.lat>37.45&&c.lat<37.60&&c.lng>127.20&&c.lng<127.55)||
+    (c.lat>37.50&&c.lat<37.65&&c.lng>126.60&&c.lng<126.82)
+  ));
+
+  const probability=nearby.length>0&&nearby[0].d<3000?'높음':
+    nearby.length>0&&nearby[0].d<8000?'보통':nearHan?'보통':'낮음';
+
+  // 가장 가까운 도래지 대표종
+  const repSpecies=nearby.length>0?nearby[0].species.slice(0,3):[];
+  const notice=(probability!=='낮음')?[
+    '🌙 야간 조명 저감 설계 권고 (LED 조류 친화형)',
+    '🏞️ 수변 완충 식생대 30m 이상 확보 권장',
+    '📢 정온 구간(이동 경로 인근) 소음 저감 계획'
+  ]:[];
+
+  return{probability,nearby,repSpecies,notice,
+    source:nearby.length>0?'내장 DB (환경부 주요 겨울철새 도래지)':'판단 불가',
+    reliability:nearby.length>0?'partial':'none'};
 }
 
 // ════════════════════════════════════════════
