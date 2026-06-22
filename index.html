@@ -532,7 +532,7 @@ let egisEcoLayer=null, forestLayer=null, landcoverLayer=null;
 function toggleEgisEco(){
   if(document.getElementById('l-egis-eco').checked){
     // 환경부 환경공간정보서비스 — 생태자연도 WMS
-    egisEcoLayer=L.tileLayer.wms('https://egis.me.go.kr/geoserver/wms',{
+    egisEcoLayer=L.tileLayer.wms(WORKER_URL+'/egis',{
       layers:'me:NESIS_TOTAL',format:'image/png',transparent:true,
       opacity:0.55,attribution:'© 환경부 EGIS 생태자연도',
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
@@ -544,7 +544,7 @@ function toggleEgisEco(){
 function toggleForest(){
   if(document.getElementById('l-forest').checked){
     // 산림청 산림공간정보서비스 — 임상도 WMS
-    forestLayer=L.tileLayer.wms('https://fgis.fs.go.kr/fgis/ogc/wms',{
+    forestLayer=L.tileLayer.wms(WORKER_URL+'/forest-wms',{
       layers:'LSIS:LC_SAN_LIMSANGDO_5',format:'image/png',transparent:true,
       opacity:0.5,attribution:'© 산림청 산림공간정보',
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
@@ -556,7 +556,7 @@ function toggleForest(){
 function toggleLandcover(){
   if(document.getElementById('l-landcover').checked){
     // 환경부 EGIS — 중분류 토지피복도 WMS
-    landcoverLayer=L.tileLayer.wms('https://egis.me.go.kr/geoserver/wms',{
+    landcoverLayer=L.tileLayer.wms(WORKER_URL+'/egis',{
       layers:'me:LCODE_A',format:'image/png',transparent:true,
       opacity:0.45,attribution:'© 환경부 EGIS 토지피복도',
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
@@ -4378,15 +4378,19 @@ function l2ToLc(code,name){
 }
 
 async function fetchMceeLC(lat,lng){
+  // EGIS GeoServer WMS — me:LCODE_A (중분류 토지피복도 2025)
+  // Worker /egis 경유 (getRealLandcover 와 동일 엔드포인트)
   const d=0.005,minx=lng-d,miny=lat-d,maxx=lng+d,maxy=lat+d;
-  const params=`?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=EGIS:lv3_2025y&QUERY_LAYERS=EGIS:lv3_2025y&INFO_FORMAT=application/json&SRS=EPSG:4326&BBOX=${minx},${miny},${maxx},${maxy}&WIDTH=256&HEIGHT=256&X=128&Y=128`;
+  const params=`/egis?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=me:LCODE_A&QUERY_LAYERS=me:LCODE_A&INFO_FORMAT=application/json&SRS=EPSG:4326&BBOX=${minx},${miny},${maxx},${maxy}&WIDTH=256&HEIGHT=256&X=128&Y=128`;
   try{
     const r=await fetch(WORKER_URL+params);
     if(!r.ok)return null;
     const d2=await r.json();
     if(d2.features&&d2.features.length>0){
       const p=d2.features[0].properties;
-      const code=p.l3_code||p.l2_code||p.l1_code,name=p.l3_name||p.l2_name||p.l1_name;
+      // EGIS GeoServer: LNLC_CD / LNLC_NM (me:LCODE_A 레이어)
+      const code=p.LNLC_CD||p.lnlc_cd||p.l3_code||p.l2_code||p.l1_code;
+      const name=p.LNLC_NM||p.lnlc_nm||p.CLS_NM||p.cls_nm||p.l3_name||p.l2_name||p.l1_name;
       if(code||name)return l2ToLc(code,name);
     }
   }catch(e){console.warn('fetchMceeLC 오류:',e);}
