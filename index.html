@@ -3976,13 +3976,26 @@ const KEYS={
   kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  envgrd:'YD6X-CR5X-EJDT-V2OJ',             // 국토환경성평가지도
-  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',  // 홍수위험지도 정보제공포털
-  ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272', // 에코뱅크 (국립생태원)
-  gyeonggi:'f195170eba6849b1a7ebf5d594e20346',  // 경기도 공공데이터 (보호종/보호수)
-  sgis:'',        // 통계청 SGIS Consumer Key  (sgis.kostat.go.kr에서 발급)
-  sgisSecret:''   // 통계청 SGIS Consumer Secret (Consumer Key와 다른 별도 값)
+  envgrd:'YD6X-CR5X-EJDT-V2OJ',
+  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',
+  ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272',
+  gyeonggi:'f195170eba6849b1a7ebf5d594e20346',
+  sgis:'',
+  sgisSecret:''
 };
+// ── 페이지 로드 시 localStorage에서 키 복원 (설정 모달 안 열어도 적용) ──
+(function initKeysFromStorage(){
+  try{
+    const ls=localStorage;
+    if(ls.getItem('ls_vworld'))    KEYS.vworld    =ls.getItem('ls_vworld');
+    if(ls.getItem('ls_airkorea'))  KEYS.airkorea  =ls.getItem('ls_airkorea');
+    if(ls.getItem('ls_kma'))       KEYS.kma       =ls.getItem('ls_kma');
+    if(ls.getItem('ls_soilrda'))   KEYS.soilrda   =ls.getItem('ls_soilrda');
+    if(ls.getItem('ls_nibr'))      KEYS.nibr      =ls.getItem('ls_nibr');
+    if(ls.getItem('ls_sgis'))      KEYS.sgis      =ls.getItem('ls_sgis');
+    if(ls.getItem('ls_sgis_secret')) KEYS.sgisSecret=ls.getItem('ls_sgis_secret');
+  }catch(e){}
+})();
 
 // Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
 const WORKER_URL='https://weathered-bar-2c29.younrake.workers.dev';
@@ -4408,22 +4421,9 @@ function l2ToLc(code,name){
 }
 
 async function fetchMceeLC(lat,lng){
-  // EGIS GeoServer WMS — me:LCODE_A (중분류 토지피복도 2025)
-  // Worker /egis 경유 (getRealLandcover 와 동일 엔드포인트)
-  const d=0.005,minx=lng-d,miny=lat-d,maxx=lng+d,maxy=lat+d;
-  const params=`/egis?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=me:LCODE_A&QUERY_LAYERS=me:LCODE_A&INFO_FORMAT=application/json&SRS=EPSG:4326&BBOX=${minx},${miny},${maxx},${maxy}&WIDTH=256&HEIGHT=256&X=128&Y=128`;
-  try{
-    const r=await fetch(WORKER_URL+params);
-    if(!r.ok)return null;
-    const d2=await r.json();
-    if(d2.features&&d2.features.length>0){
-      const p=d2.features[0].properties;
-      // EGIS GeoServer: LNLC_CD / LNLC_NM (me:LCODE_A 레이어)
-      const code=p.LNLC_CD||p.lnlc_cd||p.l3_code||p.l2_code||p.l1_code;
-      const name=p.LNLC_NM||p.lnlc_nm||p.CLS_NM||p.cls_nm||p.l3_name||p.l2_name||p.l1_name;
-      if(code||name)return l2ToLc(code,name);
-    }
-  }catch(e){console.warn('fetchMceeLC 오류:',e);}
+  // getRealLandcover와 동일 로직 재사용 — 레이어명 자동 탐색
+  const lc=await getRealLandcover({lat,lng});
+  if(lc) return lc; // 이미 l2ToLc 호환 구조
   return null;
 }
 
@@ -5124,31 +5124,39 @@ async function getRealEnvGrade(c){
 // Worker /egis 경유 (CORS 우회)
 // ════════════════════════════════════════════
 async function getRealLandcover(c){
-  try{
-    const d=0.0008;
-    const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
-    const url=`${WORKER_URL}/egis?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
-      `&LAYERS=me:LCODE_A&QUERY_LAYERS=me:LCODE_A`+
-      `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
-      `&INFO_FORMAT=application/json`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
-    const text=await r.text();
-    if(!text||text.trim().startsWith('<')) return null;
-    const d2=JSON.parse(text);
-    const features=d2.features||[];
-    if(!features.length) return null;
-    const props=features[0].properties||features[0];
-    // EGIS 중분류 토지피복: LNLC_CD, LNLC_NM or CLS_NM
-    const code=String(props.LNLC_CD||props.lnlc_cd||props.CODE||'');
-    const name=props.LNLC_NM||props.lnlc_nm||props.CLS_NM||props.cls_nm||'';
-    if(!name&&!code) return null;
-    // 생태 관련 분류
-    const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
-    const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호');
-    console.log('✅ 토지피복:',code,name);
-    return{code,name,isEco:eco,isWater:water,
-      source:'실제 (환경부 EGIS 중분류 토지피복도)',reliability:'real'};
-  }catch(e){console.warn('토지피복도 GetFeatureInfo 실패:',e.message);return null;}
+  // EGIS GeoServer WMS GetFeatureInfo — 레이어명 후보 순서대로 시도
+  const EGIS_LAYERS=[
+    'me:LCODE_A',        // 중분류 토지피복도 (일반 명칭)
+    'me:LNLC_A',         // Land Nature Land Cover
+    'me:LSCT_MELT_LNLC', // 환경부 EGIS 중분류
+    'me:LSCT_SMLT_LNLC', // 환경부 EGIS 대분류
+  ];
+  const d=0.0008;
+  const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
+  for(const layer of EGIS_LAYERS){
+    try{
+      const url=`${WORKER_URL}/egis?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+        `&LAYERS=${layer}&QUERY_LAYERS=${layer}`+
+        `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
+        `&INFO_FORMAT=application/json`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+      const text=await r.text();
+      if(!text||text.trim().startsWith('<')||text.includes('"exceptions"')) continue;
+      const d2=JSON.parse(text);
+      const features=d2.features||[];
+      if(!features.length) continue;
+      const props=features[0].properties||features[0];
+      const code=String(props.LNLC_CD||props.lnlc_cd||props.L2_CODE||props.CODE||props.code||'');
+      const name=props.LNLC_NM||props.lnlc_nm||props.L2_NM||props.CLS_NM||props.cls_nm||props.NAME||'';
+      if(!name&&!code) continue;
+      const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
+      const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호');
+      console.log(`✅ 토지피복 (${layer}):`,code,name);
+      return{code,name,isEco:eco,isWater:water,layer,
+        source:'실제 (환경부 EGIS 토지피복도)',reliability:'real'};
+    }catch(e){console.warn(`토지피복 ${layer} 실패:`,e.message);}
+  }
+  return null;
 }
 
 // ════════════════════════════════════════════
