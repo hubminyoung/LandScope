@@ -3980,7 +3980,8 @@ const KEYS={
   flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',  // 홍수위험지도 정보제공포털
   ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272', // 에코뱅크 (국립생태원)
   gyeonggi:'f195170eba6849b1a7ebf5d594e20346',  // 경기도 공공데이터 (보호종/보호수)
-  sgis:'e9d00ead80e84464b936'                   // 통계청 SGIS 인구통계
+  sgis:'',        // 통계청 SGIS Consumer Key  (sgis.kostat.go.kr에서 발급)
+  sgisSecret:''   // 통계청 SGIS Consumer Secret (Consumer Key와 다른 별도 값)
 };
 
 // Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
@@ -3997,12 +3998,16 @@ function openSettings(){
     KEYS.kma=localStorage.getItem('ls_kma')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
     KEYS.soilrda=localStorage.getItem('ls_soilrda')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
     KEYS.nibr=localStorage.getItem('ls_nibr')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
+    KEYS.sgis=localStorage.getItem('ls_sgis')||'';
+    KEYS.sgisSecret=localStorage.getItem('ls_sgis_secret')||'';
   }catch(e){}
   document.getElementById('key-vworld').value=KEYS.vworld;
   document.getElementById('key-airkorea').value=KEYS.airkorea;
   document.getElementById('key-kma').value=KEYS.kma;
   document.getElementById('key-soilrda').value=KEYS.soilrda;
   document.getElementById('key-nibr').value=KEYS.nibr;
+  document.getElementById('key-sgis-key').value=KEYS.sgis;
+  document.getElementById('key-sgis-secret').value=KEYS.sgisSecret;
   updateKeyStatus();
   document.getElementById('settingsModal').classList.add('open');
 }
@@ -4013,18 +4018,22 @@ function saveApiKeys(){
   KEYS.kma=document.getElementById('key-kma').value.trim();
   KEYS.soilrda=document.getElementById('key-soilrda').value.trim();
   KEYS.nibr=document.getElementById('key-nibr').value.trim();
+  KEYS.sgis=document.getElementById('key-sgis-key').value.trim();
+  KEYS.sgisSecret=document.getElementById('key-sgis-secret').value.trim();
   try{
     localStorage.setItem('ls_vworld',KEYS.vworld);
     localStorage.setItem('ls_airkorea',KEYS.airkorea);
     localStorage.setItem('ls_kma',KEYS.kma);
     localStorage.setItem('ls_soilrda',KEYS.soilrda);
     localStorage.setItem('ls_nibr',KEYS.nibr);
+    localStorage.setItem('ls_sgis',KEYS.sgis);
+    localStorage.setItem('ls_sgis_secret',KEYS.sgisSecret);
   }catch(e){}
   updateKeyStatus();
   closeSettings();
   const toast=document.createElement('div');
   toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e8449;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;pointer-events:none;transition:opacity .4s;font-family:"Noto Sans KR",sans-serif;';
-  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
+  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis&&KEYS.sgisSecret].filter(Boolean).length;
   toast.textContent=`✅ 저장됨 — ${4+paidN}/12개 API 연결`;
   document.body.appendChild(toast);
   setTimeout(()=>{toast.style.opacity='0';setTimeout(()=>document.body.removeChild(toast),400);},2000);
@@ -4197,6 +4206,26 @@ async function testApi(type){
       }
     }catch(e){document.getElementById('status-nibr').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-nibr').className='api-status err';}
   }
+  else if(type==='sgis'){
+    const cKey=document.getElementById('key-sgis-key').value.trim();
+    const cSec=document.getElementById('key-sgis-secret').value.trim();
+    if(!cKey||!cSec){document.getElementById('status-sgis').textContent='⚠️ Consumer Key + Consumer Secret 둘 다 입력하세요';return;}
+    document.getElementById('status-sgis').textContent='⏳ 토큰 발급 테스트 중…';document.getElementById('status-sgis').className='api-status idle';
+    try{
+      const url=`${WORKER_URL}/sgis/OpenAPI3/auth/authentication.json?consumer_key=${encodeURIComponent(cKey)}&consumer_secret=${encodeURIComponent(cSec)}`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+      const d=await r.json();
+      if(d.errCd===0&&d.result?.accessToken){
+        document.getElementById('status-sgis').textContent=`✅ 토큰 발급 성공 — 보행량·인구 연동 가능`;
+        document.getElementById('status-sgis').className='api-status ok';
+        document.getElementById('test-sgis-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
+      }else{
+        document.getElementById('status-sgis').textContent=`❌ 토큰 발급 실패 (errCd=${d.errCd}): ${d.errMsg||'키 오류'}`;
+        document.getElementById('status-sgis').className='api-status err';
+        document.getElementById('test-sgis-status').innerHTML='<span style="color:#ef9a9a">❌ 인증 실패</span>';
+      }
+    }catch(e){document.getElementById('status-sgis').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-sgis').className='api-status err';}
+  }
   else if(type==='vworld'){
     const key=document.getElementById('key-vworld').value.trim();
     if(!key){document.getElementById('status-vworld').textContent='⚠️ 키를 먼저 입력하세요';return;}
@@ -4264,15 +4293,14 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
-    // VWorld Data API — JSONP 직접 호출 (Worker 불필요, 사용자 키 그대로 사용)
-    // Worker 경유 시 하드코딩 키로 대체되는 버그 회피
-    const base=`https://api.vworld.kr/req/data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    // VWorld Data API — Worker /vworld-data 경유 (CORS 우회, 사용자 키 그대로 전달)
+    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
     // UQ111 용도지역, UQ112 용도지구(문화재/최고고도/경관지구 등), UQ113 용도구역(개발제한), NSR001 자연공원
     const [r1,r2,r3,r4]=await Promise.allSettled([
-      vworldJsonp(base+'&data=LT_C_UQ111'),
-      vworldJsonp(base+'&data=LT_C_UQ112'),
-      vworldJsonp(base+'&data=LT_C_UQ113'),
-      vworldJsonp(base+'&data=LT_C_NSR001'),
+      fetch(base+'&data=LT_C_UQ111').then(r=>r.json()),
+      fetch(base+'&data=LT_C_UQ112').then(r=>r.json()),
+      fetch(base+'&data=LT_C_UQ113').then(r=>r.json()),
+      fetch(base+'&data=LT_C_NSR001').then(r=>r.json()),
     ]);
 
     let zone='확인필요', greenbelt=false;
@@ -4853,13 +4881,12 @@ async function getRealNoise(c){
 // 발급: https://sgis.kostat.go.kr/developer/html/newOpenApi/api/develop/accessToken.html
 // ════════════════════════════════════════════
 async function getSgisPopulation(c){
-  if(!KEYS.sgis) return null;
-  // SGIS는 CORS 차단 → Cloudflare Worker /sgis 경유 필수
-  const W=WORKER_URL; // 예: https://weathered-bar-2c29.younrake.workers.dev
+  if(!KEYS.sgis||!KEYS.sgisSecret) return null; // consumer_key + consumer_secret 둘 다 필요
+  const W=WORKER_URL;
   try{
-    // 1단계: 액세스 토큰 발급
+    // 1단계: 액세스 토큰 발급 (consumer_key ≠ consumer_secret — sgis.kostat.go.kr에서 발급받은 두 값)
     const tokenUrl=`${W}/sgis/OpenAPI3/auth/authentication.json`+
-      `?consumer_key=${KEYS.sgis}&consumer_secret=${KEYS.sgis}`;
+      `?consumer_key=${encodeURIComponent(KEYS.sgis)}&consumer_secret=${encodeURIComponent(KEYS.sgisSecret)}`;
     const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(8000)});
     const td=await tr.json();
     if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패(errCd='+td.errCd+'):',td.errMsg);return null;}
@@ -5355,6 +5382,23 @@ async function getRealAir(c){
         <button onclick="testApi('nibr')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
       </div>
       <div class="api-status idle" id="status-nibr" style="margin-top:4px;">⬡ 미설정 — 시뮬레이션 사용 중 (키 입력 시 실제 멸종위기종 데이터로 업그레이드)</div>
+    </div>
+
+    <!-- ── SGIS 통계청 보행량·인구 ── -->
+    <div class="api-group">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+        <div>
+          <div class="api-group-title">👥 통계청 SGIS (보행량·인구밀도)</div>
+          <div class="api-group-desc" style="margin-bottom:0;">일평균 보행량 · 인구밀도 실측 · <a class="api-link" href="https://sgis.kostat.go.kr/developer" target="_blank">키 발급 (무료)</a></div>
+        </div>
+        <div id="test-sgis-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:4px;">
+        <input class="api-input" id="key-sgis-key" placeholder="Consumer Key" type="text" style="margin-bottom:0;flex:1;">
+        <button onclick="testApi('sgis')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
+      </div>
+      <input class="api-input" id="key-sgis-secret" placeholder="Consumer Secret" type="text" style="margin-bottom:4px;">
+      <div class="api-status idle" id="status-sgis" style="margin-top:0;">⬡ 미설정 — 발급 시 보행량·인구밀도 실측값 연동</div>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:16px;">
