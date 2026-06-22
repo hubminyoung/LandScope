@@ -938,48 +938,75 @@ async function _doAnalysis(address, coords){
 
     document.getElementById('loadingStep').textContent=STEPS[5];
     let urban = buildUrban(coords, osm);
-    const realUrban = await getRealUrban(coords);
-    if(realUrban) { urban = {...urban, zone:realUrban.zone, fsr:realUrban.fsr, bcr:realUrban.bcr, source:realUrban.source, reliability:realUrban.reliability}; }
+    // 실 API 병렬 조회: 용도지역(VWorld) + 버스정류장 + 홍수위험 + 소음 + 인구
+    const [realUrbanR, realBusR, realFloodR, realNoiseR, sgisPopR] = await Promise.allSettled([
+      getRealUrban(coords),
+      getRealBusStops(coords),
+      getRealFloodRisk(coords),
+      getRealNoise(coords),
+      getSgisPopulation(coords)
+    ]);
+    const realUrban=realUrbanR.value;
+    const realBus=realBusR.value;
+    const realFlood=realFloodR.value;
+    const realNoise=realNoiseR.value;
+    const sgisPop=sgisPopR.value;
+
+    // 용도지역 머지 (VWorld 데이터로 덮어쓰기)
+    if(realUrban){
+      urban={...urban,
+        zone:realUrban.zone, fsr:realUrban.fsr, bcr:realUrban.bcr,
+        greenbelt:realUrban.greenbelt, inNaturalPark:realUrban.inNaturalPark,
+        restr:realUrban.restr, districtNames:realUrban.districtNames,
+        implications:[...(realUrban.implications||[]),...(urban.implications||[]).filter(i=>!realUrban.implications.some(ri=>ri===i))],
+        source:realUrban.source, reliability:realUrban.reliability
+      };
+    }
 
     // ── 데이터 로그: 용도지역 ──
     if(realUrban&&realUrban.reliability==='real'){
-      const vwUrl=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key=${KEYS.vworld}&format=json&geomFilter=POINT(${coords.lng}%20${coords.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
-      dataLog.push({category:'용도지역',icon:'🏗️',api:'VWorld 국토부 (키 필요)',
-        url:vwUrl,note:`국토교통부 토지이음 용도지역 레이어 (LT_C_UQ111) — 법정 용도지역 실제값`,
-        values:`용도지역: ${realUrban.zone} / 용적률 기준 ${realUrban.fsr}% / 건폐율 기준 ${realUrban.bcr}%`,
+      const districts=realUrban.districtNames?.length>0?` / 용도지구: ${realUrban.districtNames.join(', ')}`:'';
+      const natural=realUrban.inNaturalPark?' / 자연공원 포함':'';
+      dataLog.push({category:'용도지역·지구',icon:'🏗️',api:'VWorld 국토부 LT_C_UQ111+UQ112+UQ113+NSR001',
+        url:`https://api.vworld.kr/`,
+        note:'용도지역(UQ111) + 용도지구(UQ112: 문화재·최고고도·경관 등) + 개발제한구역(UQ113) + 자연공원(NSR001) 병렬 조회',
+        values:`용도지역: ${realUrban.zone} / 용적률 ${realUrban.fsr}% / 건폐율 ${realUrban.bcr}%${districts}${natural}${realUrban.greenbelt?' / ⚠️개발제한':''}`,
         status:'real',verifyUrl:`https://www.eum.go.kr/`,verifyLabel:'토지이음 직접 확인'});
     }else{
       dataLog.push({category:'용도지역',icon:'🏗️',api:'OSM 토지이용 추정 (VWorld 키 미설정)',
-        url:'https://api.vworld.kr/',note:osm?`OSM landuse 태그 기반 추정 — 상위 태그: ${[...new Set(osm.zoneTypes)].slice(0,3).join(', ')||'없음'}`:'OSM 실패 — 좌표 기반 시뮬레이션',
+        url:'https://api.vworld.kr/',
+        note:osm?`OSM landuse 태그 기반 추정`:'좌표 기반 추정',
         values:`추정 용도지역: ${urban.zone}`,status:'simulated',
         verifyUrl:'https://www.vworld.kr/dev/v4dv_2ddataguide2_s001.do',verifyLabel:'VWorld 키 신청'});
     }
 
     document.getElementById('loadingStep').textContent=STEPS[6];
-    const traffic = buildTraffic(coords, osm);
-    const social = getSocial(coords);
+    const traffic = buildTraffic(coords, osm, realBus);
 
     // ── 데이터 로그: 교통 ──
-    if(osm&&osm.nearestStation){
-      dataLog.push({category:'교통/대중교통',icon:'🚇',api:'OpenStreetMap Overpass API',
-        url:osmUrl,note:'OSM 쿼리 내 포함 — railway=station|subway_entrance 노드, highway=bus_stop 노드',
-        values:`가장 가까운 역: ${traffic.subName} (${traffic.subDist}m) / 버스정류장 ${traffic.buses}개`,
-        status:'real',verifyUrl:`https://www.openstreetmap.org/#map=16/${coords.lat}/${coords.lng}`,verifyLabel:'OSM 지도에서 확인'});
-    }else{
-      dataLog.push({category:'교통/대중교통',icon:'🚇',api:'시뮬레이션 (내장 역 좌표)',
-        url:'',note:'내장된 전국 주요 역사 좌표(70개+) 기반 거리 계산',
-        values:`가장 가까운 역: ${traffic.subName} (${traffic.subDist}m) — 내장 데이터`,
-        status:'simulated',verifyUrl:'https://www.kr.korail.com/',verifyLabel:'코레일 역사 확인'});
-    }
+    const busSource=realBus?`data.go.kr 버스API (${realBus.count}개)`:osm&&osm.nearestStation?'OpenStreetMap':'시뮬레이션';
+    const busStatus=realBus?'real':osm&&osm.nearestStation?'real':'simulated';
+    dataLog.push({category:'교통/대중교통',icon:'🚇',
+      api:osm&&osm.nearestStation?'OpenStreetMap Overpass + 버스정류장 API':busSource,
+      note:`지하철: ${traffic.subName} (${traffic.subDist}m) — ${osm?.nearestStation?'OSM 실측':'내장 역 좌표'} / 버스정류장: ${busSource}`,
+      values:`역까지 ${traffic.subDist}m / 반경 500m 버스정류장 ${traffic.buses}개`,
+      status:busStatus,
+      verifyUrl:`https://www.openstreetmap.org/#map=16/${coords.lat}/${coords.lng}`,
+      verifyLabel:'OSM 지도에서 확인'});
 
-    // ── 데이터 로그: 사회/인구 ──
-    dataLog.push({category:'사회/인구',icon:'👥',api:'시뮬레이션 (통계청 미연동)',
-      url:'https://kosis.kr/',note:'공개 CORS API 없음 — 좌표 기반 결정론적 시뮬레이션',
-      values:`인구밀도 ${social.popD.toLocaleString()}명/㎢ (추정) / 연령 구성 추정값`,
-      status:'simulated',verifyUrl:'https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1B040A3',verifyLabel:'통계청 직접 확인'});
+    // ── 사회/인구 ──
+    const social = getSocial(coords, sgisPop);
+    dataLog.push({category:'사회/인구',icon:'👥',
+      api:sgisPop?'통계청 SGIS 2020 인구총조사':'시뮬레이션 (SGIS 키 미설정)',
+      url:'https://sgis.kostat.go.kr/',
+      note:sgisPop?`통계청 SGIS 격자 기반 실측값 (2020)`:
+        'SGIS 키 미설정 — sgis.kostat.go.kr에서 무료 발급 후 설정 가능',
+      values:sgisPop?`인구밀도 ${sgisPop.popD?.toLocaleString()}명/㎢ (실측)`:`인구 데이터 미연동`,
+      status:sgisPop?'real':'simulated',
+      verifyUrl:'https://sgis.kostat.go.kr/',verifyLabel:'SGIS 바로가기'});
 
     document.getElementById('loadingStep').textContent=STEPS[7];
-    const water = buildWater(coords, osm, elev);
+    const water = buildWater(coords, osm, elev, realFlood, realNoise);
     const landscape = buildLandscape(coords, osm);
 
     // ── 환경부 토지피복도 실데이터 (Cloudflare Worker 경유) ──
@@ -1001,11 +1028,20 @@ async function _doAnalysis(address, coords){
     if(pnu) console.log('PNU:', pnu);
 
     // ── 데이터 로그: 수환경 ──
-    dataLog.push({category:'수환경/홍수',icon:'💧',api:'OSM 수계 + 시뮬레이션',
-      url:osmUrl,note:osm?`OSM waterway/natural=water 레이어 기반 — 하천 인접: ${osm.hasMajorRiver?'예':'아니오'}, 수계 ${osm.waterWays}개`:'시뮬레이션',
-      values:`홍수위험도 ${water.floodRisk} / 불투수율 ${water.impRatio}% / 수질등급 ${water.wqGrade}등급`,
-      status:osm?'partial':'simulated',
-      verifyUrl:'https://www.weis.go.kr/',verifyLabel:'물환경정보시스템 확인'});
+    const floodSrc=realFlood?`국토부 홍수위험지도 실측`:osm?'OSM 수계 기반 추정':'시뮬레이션';
+    const noiseSrc=realNoise?`환경부 소음측정망 (${realNoise.station}, ${realNoise.dist}m)`:null;
+    dataLog.push({category:'수환경/홍수',icon:'💧',
+      api:realFlood?'국토부 홍수위험지도 WFS':osm?'OSM 수계 + 추정':'시뮬레이션',
+      note:`홍수위험: ${floodSrc} / 수계: ${osm?`하천인접 ${osm.hasMajorRiver?'예':'아니오'}, ${osm.waterWays}개`:'미확인'}`,
+      values:`홍수위험도 ${water.floodRisk} (${realFlood?'실측':'추정'}) / 불투수율 ${water.impRatio}% / 수질등급 ${water.wqGrade}등급`,
+      status:realFlood?'real':osm?'partial':'simulated',
+      verifyUrl:'https://floodmap.go.kr/',verifyLabel:'홍수위험지도 확인'});
+    if(noiseSrc){
+      dataLog.push({category:'소음',icon:'🔊',api:'환경부 소음측정망',
+        note:noiseSrc,
+        values:`소음 ${realNoise.noise}dB (${realNoise.noiseg})`,
+        status:'real',verifyUrl:'https://www.noiseinfo.or.kr/',verifyLabel:'소음지도 확인'});
+    }
 
     // ── 데이터 로그: 경관/BAR ──
     dataLog.push({category:'경관/BAR',icon:'🏞️',api:osm?'OSM 토지피복 기반 BAR 산정':'시뮬레이션',
@@ -1594,9 +1630,107 @@ if(gravelPct>30)imp.push(`🪨 자갈함량 높음(${gravelPct}%) → 객토 및
 const elevNote=elev&&elev.reliability==='real'?`고도 ${elev.elevation}m · 경사 ${elev.slope}°`:'';
 return {soil_type,drainage,ph,om,gw,slope:+slope.toFixed(1),effectiveDepth,gravelPct,ok,suitability:ok?'적합':'개량 필요',elevNote,implications:imp,source:`토양 시뮬레이션 (고도·경사: ${elev?elev.source:'시뮬레이션'})`,reliability:elev&&elev.reliability==='real'?'partial':'simulated'};}
 function buildAir(c,osm,aqReal){const rng=seededRng(c.lat,c.lng,5);let pm25,pm10,pm25g,noise,noiseg,station;if(aqReal&&aqReal.reliability==='real'){pm25=aqReal.pm25;pm10=aqReal.pm10;pm25g=aqReal.pm25g;station=aqReal.station;}else{const urb=osm&&osm.zoneTypes.some(z=>['commercial','retail','industrial'].includes(z));pm25=urb?rndInt(rng,20,45):rndInt(rng,10,28);pm10=pm25+rndInt(rng,10,25);pm25g=pm25<15?'좋음':pm25<35?'보통':pm25<75?'나쁨':'매우나쁨';}const nearRoad=osm&&osm.zoneTypes.some(z=>['commercial','retail'].includes(z));noise=nearRoad?rndInt(rng,60,80):rndInt(rng,40,65);noiseg=noise<50?'쾌적':noise<65?'보통':noise<75?'시끄러움':'매우시끄러움';const imp=[];if(pm25>35)imp.push('😷 대기질 나쁨 → 차단 녹지대·방진식재 필요');if(noise>65)imp.push('🔊 소음 높음 → 방음식재(차폐림)·방음벽 검토');if(pm25<20&&noise<55)imp.push('✅ 쾌적한 환경 → 야외활동 공간 확대 유리');return {pm25,pm10,noise,pm25g,noiseg,station,implications:imp,source:aqReal&&aqReal.reliability==='real'?aqReal.source:'시뮬레이션 (연동 예정: 에어코리아)',reliability:aqReal&&aqReal.reliability==='real'?'real':'simulated'};}
-function buildUrban(c,osm){const rng=seededRng(c.lat,c.lng,3);const zone=osm?osm.dominantZone:pick(rng,['일반주거지역','제2종일반주거지역','준주거지역','일반상업지역']);const fsrMap={'중심상업지역':1500,'일반상업지역':1300,'근린상업지역':900,'준주거지역':500,'일반주거지역':250,'자연녹지지역':100,'농림지역':80};const fsr=fsrMap[zone]||rndInt(rng,150,400);const bcr=zone.includes('상업')?80:zone.includes('공업')?70:60;const heritage=rng()<0.06;const greenPlan=osm?osm.greenRatio>0.15:rng()<0.3;const greenbelt=osm?(osm.ecoGrade<=2&&osm.buildingRatio<0.1):false;const restr=[];if(heritage)restr.push('문화재 보호구역');if(greenbelt)restr.push('개발제한구역(그린벨트)');const imp=[];if(zone.includes('상업'))imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');if(greenPlan)imp.push('🌳 녹지 계획 연계 가능');if(greenbelt)imp.push('🚫 그린벨트 → 개발 제한, 보전 녹지 유지 필수');return {zone,fsr,bcr,heritage,greenPlan,greenbelt,restr,implications:imp,source:osm?'실제 (OpenStreetMap 토지이용)':'시뮬레이션',reliability:osm?'real':'simulated'};}
-function buildTraffic(c,osm){const rng=seededRng(c.lat,c.lng,4);let subDist,subName,buses;if(osm&&osm.nearestStation){subDist=osm.nearestStationDist;const tags=osm.nearestStation.tags||{};subName=tags.name||tags['name:ko']||tags['name:en']||'인근역';buses=osm.busCount;}else{const dists=SUBWAY.map(s=>({d:dist(c.lat,c.lng,s.lat,s.lng),name:s.name}));dists.sort((a,b)=>a.d-b.d);subDist=Math.round(dists[0].d);subName=dists[0].name;buses=rndInt(rng,1,8);}const peds=rndInt(rng,300,60000);const bike=rng()<0.45;let acc=100;if(subDist>1000)acc-=30;else if(subDist>500)acc-=15;if(buses<2)acc-=20;if(!bike)acc-=10;acc=Math.max(0,acc);const pedLv=peds>20000?'매우 높음':peds>8000?'높음':peds>2000?'보통':'낮음';const imp=[];if(subDist<300)imp.push('🚇 역세권(300m 이내) → 광장·보행 연계 핵심');else if(subDist<600)imp.push('🚇 역 근접 → 보행 동선 연계 권장');if(peds>10000)imp.push('👥 보행량 많음 → 휴식공간·가로수길 우선');if(bike)imp.push('🚲 자전거도로 연계 가능');return {subDist,subName,buses,peds,pedLv,bike,acc,implications:imp,source:osm&&osm.nearestStation?'실제 (OpenStreetMap 대중교통)':'시뮬레이션',reliability:osm&&osm.nearestStation?'real':'simulated'};}
-function buildWater(c,osm,elev){const rng=seededRng(c.lat,c.lng,7);const hasMajorRiver=osm?osm.hasMajorRiver:false;const hasStream=osm?osm.hasStream||osm.hasMajorRiver:false;const impRatio=osm?Math.round(osm.buildingRatio*100):rndInt(rng,20,70);let floodRisk;if(hasMajorRiver&&impRatio>50)floodRisk='높음';else if(hasMajorRiver||impRatio>70)floodRisk='중간';else floodRisk='낮음';const wqGrade=hasMajorRiver?rndInt(rng,1,3):rndInt(rng,2,5);const wqText=['매우좋음(Ia)','좋음(Ib)','약간좋음(II)','보통(III)','약간나쁨(IV)','나쁨(V)'][wqGrade-1];const annualPrecip=Math.round(1400+rng()*200);const landslideRisk=elev&&elev.slope>15?'높음':elev&&elev.slope>8?'중간':'낮음';const floodRiskIdx={높음:75,중간:45,낮음:20}[floodRisk];const score=Math.round(Math.max(0,Math.min(100,100-floodRiskIdx*0.4-(wqGrade-1)*10-(impRatio>70?15:0))));const imp=[];if(floodRisk==='높음')imp.push('🌊 홍수 위험도 높음 → 투수포장·빗물정원 설치');if(impRatio>70)imp.push(`🏗️ 불투수율 높음(${impRatio}%) → LID 기법 도입 필요`);if(hasMajorRiver)imp.push('💧 하천 인접 → 수변완충녹지·생태호안 조성 권장');return {wqGrade,wqText,floodRisk,impRatio,annualPrecip,landslideRisk,flood_risk_idx:floodRiskIdx,score,hasSurface:hasStream,nearStream:hasStream,implications:imp,source:osm?'실제 (OpenStreetMap 수계) + 수질 시뮬레이션':'시뮬레이션',reliability:osm?'partial':'simulated'};}
+function buildUrban(c,osm){
+  const rng=seededRng(c.lat,c.lng,3);
+  const zone=osm?osm.dominantZone:'확인필요'; // 랜덤 제거
+  // 법령 기준 FSR/BCR (국토계획법 시행령 상한값)
+  const zoneRuleSimple={
+    '중심상업지역':{fsr:1500,bcr:90},'일반상업지역':{fsr:1300,bcr:80},
+    '근린상업지역':{fsr:900,bcr:70},'준주거지역':{fsr:500,bcr:70},
+    '제3종일반주거지역':{fsr:300,bcr:50},'제2종일반주거지역':{fsr:250,bcr:60},
+    '제1종일반주거지역':{fsr:200,bcr:60},'일반주거지역':{fsr:250,bcr:60},
+    '전용주거지역':{fsr:150,bcr:50},
+    '일반공업지역':{fsr:350,bcr:70},'준공업지역':{fsr:400,bcr:70},
+    '자연녹지지역':{fsr:100,bcr:20},'보전녹지지역':{fsr:80,bcr:20},
+    '농림지역':{fsr:80,bcr:20},'계획관리지역':{fsr:100,bcr:40}
+  };
+  const rule=zoneRuleSimple[zone]||null;
+  const fsr=rule?rule.fsr:(zone.includes('상업')?900:zone.includes('공업')?350:zone.includes('녹지')?100:200);
+  const bcr=rule?rule.bcr:(zone.includes('상업')?80:zone.includes('공업')?70:zone.includes('녹지')?20:60);
+  const greenPlan=osm?osm.greenRatio>0.15:false; // 랜덤 제거, OSM 기반만
+  const greenbelt=osm?(osm.ecoGrade<=2&&osm.buildingRatio<0.1):false;
+  const restr=[];
+  if(greenbelt)restr.push('개발제한구역(그린벨트)');
+  // heritage: 랜덤 제거 → VWorld UQ112로만 판단 (getRealUrban에서 처리)
+  const imp=[];
+  if(zone.includes('상업'))imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
+  if(greenPlan)imp.push('🌳 녹지 계획 연계 가능');
+  if(greenbelt)imp.push('🚫 그린벨트 → 개발 제한, 보전 녹지 유지 필수');
+  if(zone==='확인필요')imp.push('⚠️ VWorld 키 설정 시 정확한 용도지역 확인 가능');
+  return{zone,fsr,bcr,heritage:false,greenPlan,greenbelt,restr,implications:imp,
+    source:osm?'실제 (OpenStreetMap 토지이용)':'미확인 (VWorld 키 필요)',
+    reliability:osm?'partial':'unknown'};
+}
+function buildTraffic(c,osm,realBus){
+  const rng=seededRng(c.lat,c.lng,4);
+  let subDist,subName,buses,busSource;
+  if(osm&&osm.nearestStation){
+    subDist=osm.nearestStationDist;
+    const tags=osm.nearestStation.tags||{};
+    subName=tags.name||tags['name:ko']||tags['name:en']||'인근역';
+    buses=realBus?realBus.count:osm.busCount;
+    busSource=realBus?'real_api':'osm';
+  }else{
+    const dists=SUBWAY.map(s=>({d:dist(c.lat,c.lng,s.lat,s.lng),name:s.name}));
+    dists.sort((a,b)=>a.d-b.d);
+    subDist=Math.round(dists[0].d);subName=dists[0].name;
+    buses=realBus?realBus.count:null; // null = 데이터 없음
+    busSource=realBus?'real_api':'unknown';
+  }
+  const bike=osm?osm.hasBikeway:false; // OSM 실측
+  let acc=100;
+  if(subDist>1000)acc-=30;else if(subDist>500)acc-=15;
+  if(buses!=null&&buses<2)acc-=20;
+  if(!bike)acc-=10;
+  acc=Math.max(0,acc);
+  const imp=[];
+  if(subDist<300)imp.push('🚇 역세권(300m 이내) → 광장·보행 연계 핵심');
+  else if(subDist<600)imp.push('🚇 역 근접 → 보행 동선 연계 권장');
+  if(bike)imp.push('🚲 자전거도로 연계 가능');
+  if(buses!=null&&buses>5)imp.push(`🚌 버스 접근성 양호 (${buses}개 정류장)`);
+  const relSub=osm&&osm.nearestStation?'real':'estimated';
+  const relBus=busSource==='real_api'?'real':busSource==='osm'?'real':'unknown';
+  return{subDist,subName,buses,busSource,bike,acc,peds:null,pedLv:'데이터 미연동',implications:imp,
+    source:relSub==='real'?'실제 (OSM 지하철 + 버스API)':'추정 (내장 역 좌표)',
+    reliability:relSub==='real'&&relBus==='real'?'real':relSub==='real'?'partial':'estimated'};
+}
+function buildWater(c,osm,elev,realFlood,realNoise){
+  const rng=seededRng(c.lat,c.lng,7);
+  const hasMajorRiver=osm?osm.hasMajorRiver:false;
+  const hasStream=osm?osm.hasStream||osm.hasMajorRiver:false;
+  const impRatio=osm?Math.round(osm.buildingRatio*100):rndInt(rng,20,70);
+  // 홍수위험도: 실 데이터 우선, OSM 기반 추정 fallback
+  let floodRisk, floodReliability;
+  if(realFlood){
+    floodRisk=realFlood.floodRisk;
+    floodReliability='real';
+  }else if(hasMajorRiver&&impRatio>50){floodRisk='높음';floodReliability='estimated';}
+  else if(hasMajorRiver||impRatio>70){floodRisk='중간';floodReliability='estimated';}
+  else{floodRisk='낮음';floodReliability='estimated';}
+  // 소음: 실 데이터 우선
+  const noise=realNoise?realNoise.noise:null;
+  const noiseg=realNoise?realNoise.noiseg:null;
+  const wqGrade=hasMajorRiver?rndInt(rng,1,3):rndInt(rng,2,5);
+  const wqText=['매우좋음(Ia)','좋음(Ib)','약간좋음(II)','보통(III)','약간나쁨(IV)','나쁨(V)'][wqGrade-1];
+  const landslideRisk=elev&&elev.slope>15?'높음':elev&&elev.slope>8?'중간':'낮음';
+  const floodRiskIdx={높음:75,중간:45,낮음:20}[floodRisk];
+  const score=Math.round(Math.max(0,Math.min(100,100-floodRiskIdx*0.4-(wqGrade-1)*10-(impRatio>70?15:0))));
+  const imp=[];
+  if(floodRisk==='높음')imp.push('🌊 홍수 위험도 높음 → 투수포장·빗물정원 설치');
+  if(impRatio>70)imp.push(`🏗️ 불투수율 높음(${impRatio}%) → LID 기법 도입 필요`);
+  if(hasMajorRiver)imp.push('💧 하천 인접 → 수변완충녹지·생태호안 조성 권장');
+  if(noise!=null&&noise>65)imp.push(`🔊 소음 높음(${noise}dB) → 방음식재·차폐림 필요`);
+  const srcParts=[];
+  if(realFlood)srcParts.push('홍수위험지도 실측');
+  if(osm)srcParts.push('OSM 수계');
+  if(realNoise)srcParts.push('소음측정망 실측');
+  const reliability=realFlood?'real':osm?'partial':'simulated';
+  return{wqGrade,wqText,floodRisk,floodReliability,impRatio,noise,noiseg,
+    landslideRisk,flood_risk_idx:floodRiskIdx,score,hasSurface:hasStream,nearStream:hasStream,
+    implications:imp,
+    source:srcParts.length>0?`실제 (${srcParts.join(' + ')})`:' 시뮬레이션',
+    reliability};
+}
 function buildLandscape(c,osm){const rng=seededRng(c.lat,c.lng,8);const bar=osm?osm.bar:+((0.2+rng()*0.4)).toFixed(2);const naturalPct=osm?osm.naturalPct:Math.round(rng()*40+5);const waterArea=osm?osm.waterPct:Math.round(rng()*10);const artificialGreen=osm?osm.artificialGreen:Math.round(rng()*15+5);const permeable=osm?osm.permeable:Math.round(rng()*20);const impervious=osm?osm.impervious:Math.round(rng()*50+10);const btGrade=osm?osm.ecoGrade:Math.ceil(rng()*5);const btGradeText=['I(보전최우수)','II(보전우수)','III(보전보통)','IV(개선가능)','V(개선필요)'][btGrade-1];const lsTypeOpts=osm&&osm.hasMajorRiver?'수변경관':osm&&osm.hasNaturalWood?'산림경관':pick(rng,['도시경관','주거경관','공원경관','역사문화경관']);const viewQuality=osm?Math.round(bar*100+(btGrade<=2?15:0)):rndInt(rng,40,90);const lsGrade=viewQuality>=80?'우수':viewQuality>=60?'양호':viewQuality>=40?'보통':'불량';const imp=[];if(bar<0.3)imp.push('🏜️ BAR 저조 — 녹지 확충 및 경관 개선 필요');if(bar>=0.5)imp.push('🌳 생태면적률 양호 — 생태 네트워크 유지');if(btGrade<=2)imp.push('🦋 비오톱 고등급 → 보전 우선');if(viewQuality>70)imp.push('🎨 경관 가치 높음 — 시각 연계성 강화');const score=Math.max(0,Math.min(100,viewQuality+(bar>=0.5?15:bar>=0.3?5:-10)+(btGrade<=2?10:-5)));return {bar,naturalPct,natural:naturalPct,water:waterArea,artificialGreen,permeable,impervious,btGrade,btGradeText,lsType:lsTypeOpts,landType:lsTypeOpts,viewQuality,lsGrade,historicElement:rng()<0.08,viewOpen:rng()<0.4,implications:imp,score:Math.round(score),source:osm?'실제 (OpenStreetMap 토지피복 기반 BAR)':'시뮬레이션',reliability:osm?'real':'simulated'};}
 
 function getEcology(c){
@@ -1779,19 +1913,20 @@ function getTraffic(c){
   return{subDist,subName,buses,peds,pedLv,bike,acc,implications:imp,source:'시뮬레이션 (연동 예정: 서울시 교통 API)',reliability:'simulated'};
 }
 
-function getSocial(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,6);
-  const popD=rndInt(rng,4000,45000);
-  const raw={'10대 이하':rndInt(rng,8,20),'20~30대':rndInt(rng,20,42),'40~50대':rndInt(rng,20,35),'60대 이상':rndInt(rng,8,28)};
-  const tot=Object.values(raw).reduce((a,b)=>a+b,0);
-  const age=Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,+(v/tot*100).toFixed(1)]));
-  const rating=+(3+rng()*1.9).toFixed(1), reviews=rndInt(rng,50,8000);
+function getSocial(c, sgisPop){
   const progs=[];
-  if(age['20~30대']>35)progs.push('🏃 액티브 스포츠','📱 스마트 인터랙티브');
-  if(age['60대 이상']>22)progs.push('🪑 건강운동·휴게','♿ 무장애(BF) 설계');
-  if(age['10대 이하']>15)progs.push('🎠 어린이 놀이공간','🌳 가족 피크닉존');
-  if(!progs.length)progs.push('🌿 다목적 복합공원');
-  return{popD,age,rating,reviews,progs,source:'시뮬레이션 (연동 예정: 통계청 API)',reliability:'simulated'};
+  if(sgisPop&&sgisPop.popD){
+    // SGIS 실 데이터 있을 때
+    const aged65Pct=sgisPop.aged65||null;
+    if(aged65Pct>20)progs.push('🪑 건강운동·휴게','♿ 무장애(BF) 설계');
+    else progs.push('🌿 다목적 복합공원','🏃 액티브 스포츠');
+    return{popD:sgisPop.popD,age:null,aged65Pct,progs,
+      source:sgisPop.source,reliability:'real'};
+  }
+  // SGIS 없음 → 프로그램만 유지, 수치는 null로 처리
+  progs.push('🌿 다목적 복합공원');
+  return{popD:null,age:null,progs,
+    source:'SGIS 미연동 — sgis.kostat.go.kr 키 발급 필요',reliability:'none'};
 }
 
 // ════════════════════════════════════════════
@@ -1850,7 +1985,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     traffic:[
       {factor:'접근성 점수',value:`${trf.acc}점`,rule:'교통 접근성 종합 점수',pts:trf.acc},
       {factor:'지하철 거리',value:`${trf.subDist}m`,rule:'가까울수록 유리',pts:null},
-      {factor:'보행량',value:`${trf.peds.toLocaleString()}명/일`,rule:'보행 활성도 반영',pts:null},
+      {factor:'보행량',value:`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명/일`,rule:'보행 활성도 반영',pts:null},
       {factor:'최종 점수',value:'',rule:'접근성 점수 그대로 사용',pts:sc.traffic,total:true}
     ],
     social:[
@@ -1889,7 +2024,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
   if(sc.ecology>=70)S.push(`생태 점수 ${sc.ecology}점 — 자연 보전 자산 보유`);
   if(eco.hasWetland)S.push('습지 존재 — 수경공간 잠재력 보유');
   if(eco.treeCov>20)S.push(`수목 피복 ${eco.treeCov}% — 녹지 현황 양호`);
-  if(sc.traffic>70)S.push(`교통 점수 ${sc.traffic}점 — 일평균 보행 ${trf.peds.toLocaleString()}명`);
+  if(sc.traffic>70)S.push(`교통 점수 ${sc.traffic}점 — 일평균 보행 ${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명`);
   if(soil.ok)S.push(`토양 pH ${soil.ph} · 배수 ${soil.drainage} — 식재 적합`);
   if(wx.avg_sun>7)S.push(`일조 ${wx.avg_sun}h/day — 식물 생육 우수 환경`);
   if(lsc.bar>=0.5)S.push(`BAR ${lsc.bar} — 법적 기준 초과 달성`);
@@ -1930,7 +2065,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     principle:'바람길 축 보존: 주풍향에 직교하는 차폐 배치와 유도 배치를 구분하여 설계',
     example:`${wx.wind_direction_text} 방향 상록 교목 차폐열식 / 바람통로 축 내 개방 수공간 / 그늘막 방향 조정`});
   if(trf.subDist<500)ins.push({icon:'🚇',title:'역세권 활성화 연계',
-    reason:`${trf.subName}역 ${trf.subDist}m · 일평균 보행 ${trf.peds.toLocaleString()}명 — 높은 유동인구 잠재력`,
+    reason:`${trf.subName}역 ${trf.subDist}m · 일평균 보행 ${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 — 높은 유동인구 잠재력`,
     principle:'역세권 연계 보행 네트워크: 역 출구에서 공원 진입까지 끊김 없는 보행축 형성',
     example:'역 방향 광장 진입부 설치 / 보행 지붕형 캐노피 / 이정표 및 야간 경관 조명'});
   if(eco.nearHan)ins.push({icon:'🌊',title:'수변 생태 네트워크',
@@ -1989,9 +2124,9 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   // 출처: 도시공원 및 녹지 등에 관한 법률 시행규칙 별표3
   // 기준: 근린공원 유치거리 500m, 1인당 도시녹지 3㎡ 이상 (도시지역)
   const siteAreaM2 = Math.PI * radius * radius;
-  const pop500m = Math.round(soc.popD * Math.PI * 0.25); // 500m반경 = π×0.25km²
-  const greenPerPerson = +(siteAreaM2 / Math.max(1, pop500m)).toFixed(1);
-  const equityStatus = greenPerPerson >= 3 ? 'good' : greenPerPerson >= 1.5 ? 'caution' : 'poor';
+  const pop500m = soc.popD!=null ? Math.round(soc.popD * Math.PI * 0.25) : null;
+  const greenPerPerson = pop500m!=null ? +(siteAreaM2 / Math.max(1, pop500m)).toFixed(1) : null;
+  const equityStatus = greenPerPerson==null?'unknown': greenPerPerson >= 3 ? 'good' : greenPerPerson >= 1.5 ? 'caution' : 'poor';
   const equityStrategies = [];
   if (greenPerPerson < 3) equityStrategies.push('1인당 녹지면적 3㎡ 이상 확보 목표 — 도시공원법 시행규칙 별표3 법정 최소 기준');
   if (trf.subDist > 500) equityStrategies.push(`지하철 거리 ${trf.subDist}m — 도보 5분(400m) 이내 접근 경로 개선 검토`);
@@ -2453,10 +2588,10 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
   if (eco.treeCov < 10)                              { types.DRY.score += 15; types.DRY.basis.push(`수목 피복률 ${eco.treeCov}%`); }
 
   // ── URB: 고밀 도시·열섬·불투수 ──────────────────────────
-  if (water.impRatio >= 70 && soc.popD > 10000)      { types.URB.score += 40; types.URB.basis.push(`불투수 ${water.impRatio}% + 인구 ${soc.popD.toLocaleString()}명/㎢`); }
+  if (water.impRatio >= 70 && (soc.popD!=null && soc.popD > 10000))      { types.URB.score += 40; types.URB.basis.push(`불투수 ${water.impRatio}% + 인구 ${soc.popD.toLocaleString()}명/㎢`); }
   if (urb && urb.zone && (urb.zone.includes('상업') || urb.zone.includes('준주거'))) { types.URB.score += 30; types.URB.basis.push(`용도: ${urb.zone}`); }
   if (air.pm25 >= 25 && air.noise >= 60)             { types.URB.score += 20; types.URB.basis.push(`PM2.5 ${air.pm25}㎍/㎥ + 소음 ${air.noise}dB`); }
-  if (soc.popD > 15000)                              { types.URB.score += 10; types.URB.basis.push('인구밀도 고밀 (15,000명/㎢↑)'); }
+  if ((soc.popD!=null && soc.popD > 15000))                              { types.URB.score += 10; types.URB.basis.push('인구밀도 고밀 (15,000명/㎢↑)'); }
 
   // ── ECO: 생태 보전·법정 보호 ──────────────────────────────
   if (eco.grade <= 2)      { types.ECO.score += 50; types.ECO.basis.push(`생태자연도 ${eco.grade}등급 (자연환경보전법 제34조)`); }
@@ -2581,8 +2716,8 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
     },
     {
       phase:'⑤ 도시맥락', icon:'🏙️',
-      status: soc.popD > 20000 ? '주의' : (air.pm25 >= 35 || air.noise >= 65) ? '주의' : soc.popD > 5000 ? '양호' : '기회',
-      note: soc.popD > 20000 ? `인구 ${soc.popD.toLocaleString()}명/㎢ 고밀` : air.noise >= 65 ? `소음 ${air.noise}dB` : `PM2.5 ${air.pm25}㎍/㎥`
+      status: soc.popD!=null && soc.popD > 20000 ? '주의' : (air.pm25 >= 35 || air.noise >= 65) ? '주의' : (soc.popD!=null && soc.popD > 5000) ? '양호' : '기회',
+      note: soc.popD!=null && soc.popD > 20000 ? `인구 ${soc.popD.toLocaleString()}명/㎢ 고밀` : air.noise >= 65 ? `소음 ${air.noise}dB` : `PM2.5 ${air.pm25}㎍/㎥`
     },
   ];
 
@@ -2618,8 +2753,8 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
   if (eco.treeCov < 10)    aspects.push({ label:'녹음 부족형', icon:'🌳', color:'#a5d6a7', basis:`수목피복 ${eco.treeCov}%` });
   const sAspSlope = (elev && elev.slope != null ? elev.slope : (soil.slope || 0));
   if (sAspSlope > 10)      aspects.push({ label:'사면 불안정형', icon:'⛰️', color:'#ffb74d', basis:`경사 ${sAspSlope}°` });
-  if (soc.popD > 15000)    aspects.push({ label:'고밀 이용형', icon:'👥', color:'#ce93d8', basis:`${soc.popD.toLocaleString()}명/㎢` });
-  if (trf && trf.peds > 8000) aspects.push({ label:'보행 활성형', icon:'🚶', color:'#80deea', basis:`${trf.peds.toLocaleString()}명/일` });
+  if ((soc.popD!=null && soc.popD > 15000))    aspects.push({ label:'고밀 이용형', icon:'👥', color:'#ce93d8', basis:`${soc.popD.toLocaleString()}명/㎢` });
+  if (trf && (trf.peds!=null && trf.peds > 8000)) aspects.push({ label:'보행 활성형', icon:'🚶', color:'#80deea', basis:`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명/일` });
   if (eco.species && eco.species.some(s=>s.risk==='critical')) aspects.push({ label:'멸종위기종 서식', icon:'🦎', color:'#ef9a9a', basis:'1급 서식 확인' });
   if (eco.hasWetland) aspects.push({ label:'습지 보전 필요', icon:'🌊', color:'#80deea', basis:'습지 존재' });
 
@@ -2695,8 +2830,8 @@ function buildSpatialStrategy(wx, lsc, water, eco, soc, trf, air, soil) {
   // ※ 도시·환경 데이터를 설계 언어로 직접 번역합니다.
   const strategies = [];
 
-  if (trf && trf.peds > 8000)
-    strategies.push({ trigger:'보행량 많음', data:`${trf.peds.toLocaleString()}명/일`, response:'통과형 동선 우선 + 그늘 쉼터 집중 배치', icon:'🚶', priority:'high' });
+  if (trf && (trf.peds!=null && trf.peds > 8000))
+    strategies.push({ trigger:'보행량 많음', data:`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명/일`, response:'통과형 동선 우선 + 그늘 쉼터 집중 배치', icon:'🚶', priority:'high' });
 
   if (air.pm25 >= 25)
     strategies.push({ trigger:'PM2.5 나쁨', data:`${air.pm25}㎍/㎥`, response:'차폐녹지 (방진식재대) — 상록교목 3열 이상 밀식', icon:'🌫️', priority:'high' });
@@ -3059,9 +3194,9 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}</span></div>
         <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
         <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName}역)</span></div>
-        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses}개소</span></div>
+        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소':badge('미연동','grey')}</span></div>
         <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds.toLocaleString()}명 (${trf.pedLv}) <span style="color:#546e7a;font-size:10px;">추정</span></span></div>
+        <div class="data-row"><span class="data-key">보행량</span><span class="data-val">${badge('SGIS 키 필요','grey')} <a href="https://sgis.kostat.go.kr/" target="_blank" style="color:#546e7a;font-size:10px;">발급</a></span></div>
         <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}</span></div>
         ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
         ${[...urb.implications,...trf.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
@@ -3089,11 +3224,10 @@ function renderResults(d){
       </div>
 
       <div class="tab-content" id="tab-social">
-        <div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>
-        ${Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join('')}
-        <div class="data-row"><span class="data-key">지역 평점</span><span class="data-val">⭐ ${soc.rating} (${soc.reviews.toLocaleString()}개)</span></div>
+        ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
+        ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join(''):''}
         <div style="margin-top:8px"><div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 프로그램 제안</div>${soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}</div>
-        <div class="source-row">⬡ ${soc.source}</div>
+        <div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>
       </div>
 
       <div class="tab-content" id="tab-perf">
@@ -3350,7 +3484,7 @@ async function downloadPDF(){
             ['소음',`${air.noise}dB (${air.noiseg})`,'방음식재 계획'],
             ['용도지역',urb.zone,'개발 가능 범위'],
             ['지하철 거리',`${trf.subDist}m (${trf.subName}역)`,'접근성 판단'],
-            ['일평균 보행량',`${trf.peds.toLocaleString()}명 (${trf.pedLv})`,'이용 수요'],
+            ['일평균 보행량',`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 (${trf.pedLv})`,'이용 수요'],
           ].map((r,i)=>`<tr style="background:${i%2?'#f5f5f5':'#fff'}">
             <td style="padding:6px 10px;color:#546e7a;font-weight:500">${r[0]}</td>
             <td style="padding:6px 10px;font-weight:600">${r[1]}</td>
@@ -3719,7 +3853,8 @@ const KEYS={
   envgrd:'YD6X-CR5X-EJDT-V2OJ',             // 국토환경성평가지도
   flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',  // 홍수위험지도 정보제공포털
   ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272', // 에코뱅크 (국립생태원)
-  gyeonggi:'f195170eba6849b1a7ebf5d594e20346'   // 경기도 공공데이터 (보호종/보호수)
+  gyeonggi:'f195170eba6849b1a7ebf5d594e20346',  // 경기도 공공데이터 (보호종/보호수)
+  sgis:'e9d00ead80e84464b936'                   // 통계청 SGIS 인구통계
 };
 
 // Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
@@ -3763,8 +3898,8 @@ function saveApiKeys(){
   closeSettings();
   const toast=document.createElement('div');
   toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e8449;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;pointer-events:none;transition:opacity .4s;font-family:"Noto Sans KR",sans-serif;';
-  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi].filter(Boolean).length;
-  toast.textContent=`✅ 저장됨 — ${4+paidN}/11개 API 연결`;
+  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
+  toast.textContent=`✅ 저장됨 — ${4+paidN}/12개 API 연결`;
   document.body.appendChild(toast);
   setTimeout(()=>{toast.style.opacity='0';setTimeout(()=>document.body.removeChild(toast),400);},2000);
 }
@@ -3782,9 +3917,9 @@ function updateHeaderApiCount(){
   const el=document.getElementById('apiConnCount');
   if(!el)return;
   const freeCount=4; // OSM, OpenAQ, Open-Meteo, Open-Meteo ERA5
-  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi].filter(Boolean).length;
+  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
   const total=freeCount+paidCount;
-  const max=11;
+  const max=12;
   el.textContent=`${total}/${max} 연결`;
   el.style.background=paidCount>=5?'#1e8449':paidCount>=3?'#0288d1':paidCount>=1?'#0277bd':'#1e3a4f';
   el.style.color=paidCount>0?'white':'#90a4ae';
@@ -3999,47 +4134,98 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
-    // 용도지역 (LT_C_UQ111) + 용도구역-개발제한구역 (LT_C_UQ113) 병렬 조회
-    const baseUrl=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=5&geometry=false&attribute=true&key=${KEYS.vworld}`;
-    const [r1,r2]=await Promise.allSettled([
+    const baseUrl=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    // UQ111 용도지역, UQ112 용도지구(문화재/최고고도/경관지구 등), UQ113 용도구역(개발제한), NSR001 자연공원
+    const [r1,r2,r3,r4]=await Promise.allSettled([
       fetch(baseUrl+'&data=LT_C_UQ111').then(r=>r.json()),
+      fetch(baseUrl+'&data=LT_C_UQ112').then(r=>r.json()),
       fetch(baseUrl+'&data=LT_C_UQ113').then(r=>r.json()),
+      fetch(baseUrl+'&data=LT_C_NSR001').then(r=>r.json()),
     ]);
+
     let zone='확인필요', greenbelt=false;
-
-    // 용도지역
-    if(r1.status==='fulfilled'){
-      const d=r1.value;
-      if(d.response?.status==='OK'){
-        const features=d.response?.result?.featureCollection?.features||[];
-        if(features.length>0){
-          const props=features[0].properties;
-          zone=props.UQ111_UQ111NM||props.PRPOS_AREA_DSTRC_NM||'확인필요';
-        }
-      }
-    }
-    // 개발제한구역 (용도구역)
-    if(r2.status==='fulfilled'){
-      const d=r2.value;
-      if(d.response?.status==='OK'){
-        const features=d.response?.result?.featureCollection?.features||[];
-        greenbelt=features.length>0; // 레이어 피처 있으면 개발제한구역 안
-      }
-    }
-
-    const fsrMap={'중심상업지역':1500,'일반상업지역':1300,'근린상업지역':900,'유통상업지역':1100,
-      '준주거지역':500,'일반주거지역(3종)':300,'일반주거지역(2종)':250,'일반주거지역(1종)':200,
-      '전용주거지역':100,'공업지역':400,'준공업지역':400,'녹지지역':100,'자연녹지지역':100,
-      '보전녹지지역':80,'생산녹지지역':100,'농림지역':80,'자연환경보전지역':80};
-    const fsr=fsrMap[zone]||200;
     const restr=[];
-    if(greenbelt) restr.push('개발제한구역(그린벨트)');
+
+    // ① 용도지역
+    if(r1.status==='fulfilled'&&r1.value?.response?.status==='OK'){
+      const f=r1.value.response.result.featureCollection.features||[];
+      if(f.length>0){
+        const p=f[0].properties;
+        zone=p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';
+      }
+    }
+    // ② 용도지구 (문화재보호구역, 최고고도지구, 경관지구, 방화지구 등)
+    const districtNames=[];
+    if(r2.status==='fulfilled'&&r2.value?.response?.status==='OK'){
+      const f=r2.value.response.result.featureCollection.features||[];
+      f.forEach(ft=>{
+        const nm=ft.properties.UQ112_UQ112NM||ft.properties.ZONE_NM||'';
+        if(nm) districtNames.push(nm);
+      });
+      districtNames.forEach(nm=>{
+        if(!restr.includes(nm)) restr.push(nm);
+      });
+    }
+    // ③ 개발제한구역
+    if(r3.status==='fulfilled'&&r3.value?.response?.status==='OK'){
+      const f=r3.value.response.result.featureCollection.features||[];
+      if(f.length>0){greenbelt=true;restr.push('개발제한구역(그린벨트)');}
+    }
+    // ④ 자연공원 (국립공원·도립공원 등)
+    let inNaturalPark=false;
+    if(r4.status==='fulfilled'&&r4.value?.response?.status==='OK'){
+      const f=r4.value.response.result.featureCollection.features||[];
+      if(f.length>0){
+        inNaturalPark=true;
+        const pnm=f[0].properties.NSR001_NSR001NM||f[0].properties.ZONE_NM||'자연공원';
+        restr.push(pnm);
+      }
+    }
+
+    // 국토계획법 시행령 기준 FSR/BCR (법적 상한)
+    const zoneRule={
+      '제1종전용주거지역':{fsr:100,bcr:50},
+      '제2종전용주거지역':{fsr:150,bcr:50},
+      '제1종일반주거지역':{fsr:200,bcr:60},
+      '제2종일반주거지역':{fsr:250,bcr:60},
+      '제3종일반주거지역':{fsr:300,bcr:50},
+      '준주거지역':{fsr:500,bcr:70},
+      '중심상업지역':{fsr:1500,bcr:90},
+      '일반상업지역':{fsr:1300,bcr:80},
+      '근린상업지역':{fsr:900,bcr:70},
+      '유통상업지역':{fsr:1100,bcr:80},
+      '전용공업지역':{fsr:300,bcr:70},
+      '일반공업지역':{fsr:350,bcr:70},
+      '준공업지역':{fsr:400,bcr:70},
+      '보전녹지지역':{fsr:80,bcr:20},
+      '생산녹지지역':{fsr:100,bcr:20},
+      '자연녹지지역':{fsr:100,bcr:20},
+      '보전관리지역':{fsr:80,bcr:20},
+      '생산관리지역':{fsr:80,bcr:20},
+      '계획관리지역':{fsr:100,bcr:40},
+      '농림지역':{fsr:80,bcr:20},
+      '자연환경보전지역':{fsr:80,bcr:20},
+    };
+    // 부분 매칭 fallback
+    let rule=zoneRule[zone];
+    if(!rule){
+      const key=Object.keys(zoneRule).find(k=>zone.includes(k.replace(/[0-9종]/g,'').slice(0,4)));
+      rule=key?zoneRule[key]:null;
+    }
+    const fsr=rule?.fsr||(zone.includes('상업')?900:zone.includes('공업')?350:zone.includes('녹지')||zone.includes('농림')||zone.includes('보전')?100:200);
+    const bcr=rule?.bcr||(zone.includes('상업')?80:zone.includes('공업')?70:zone.includes('녹지')||zone.includes('농림')||zone.includes('보전')?20:60);
+
     const imp=[];
     if(greenbelt) imp.push('🚫 개발제한구역 — 건축 제한, 녹지·보전용도 한정');
+    if(inNaturalPark) imp.push('🏞️ 자연공원 내 — 공원계획 기준 적용, 환경부 심의 필요');
     if(zone.includes('상업')) imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
-    return{zone,fsr,bcr:zone.includes('상업')?80:zone.includes('공업')?70:60,
-      greenbelt,restr,implications:imp,
-      source:'실제 (브이월드 국토부 LT_C_UQ111+UQ113)',reliability:'real'};
+    if(zone.includes('녹지')||zone.includes('농림')) imp.push('🌿 녹지/농림 지역 → 생태·농업적 활용 권장');
+    districtNames.filter(n=>n.includes('문화재')).forEach(n=>imp.push(`🏛️ ${n} — 역사경관 고려, 문화재청 협의 필요`));
+    districtNames.filter(n=>n.includes('최고고도')).forEach(n=>imp.push(`📐 ${n} — 높이 제한 검토 필요`));
+    districtNames.filter(n=>n.includes('경관')).forEach(n=>imp.push(`🎨 ${n} — 경관심의 대상`));
+
+    return{zone,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
+      source:'실제 (브이월드 LT_C_UQ111+UQ112+UQ113+NSR001)',reliability:'real'};
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
 }
 
@@ -4417,6 +4603,165 @@ async function getRealSpeciesNIBR(c){
     }
     return null;
   }catch(e){console.warn('NIBR API 오류:',e);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 버스정류장 수 — data.go.kr (Worker: /bus-stop 라우트 필요)
+// 활용신청: 국토교통부_전국버스정류장정보 조회서비스 (1613000)
+// ════════════════════════════════════════════
+async function getRealBusStops(c){
+  if(!KEYS.kma) return null; // 공공데이터포털 동일 키 사용
+  try{
+    const key=encodeURIComponent(KEYS.kma);
+    // GPS 좌표 기반 반경 내 버스 정류장 조회
+    const url=`${WORKER_URL}/bus-stop?serviceKey=${key}&numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+    const text=await r.text();
+    if(text.includes('SERVICE_KEY')||text.includes('REGISTERED')||text.includes('Unexpected')) return null;
+    // XML 파싱
+    const parser=new DOMParser();
+    const xml=parser.parseFromString(text,'text/xml');
+    const items=xml.querySelectorAll('item');
+    const stops=[];
+    items.forEach(item=>{
+      const lat2=parseFloat(item.querySelector('gpsLati')?.textContent||'0');
+      const lng2=parseFloat(item.querySelector('gpsLong')?.textContent||'0');
+      const nm=item.querySelector('nodeNm')?.textContent||'';
+      const d=dist(c.lat,c.lng,lat2,lng2);
+      if(d<=1000) stops.push({name:nm,dist:Math.round(d)});
+    });
+    stops.sort((a,b)=>a.dist-b.dist);
+    if(stops.length>0){
+      return{count:stops.length,nearest:stops[0].name,nearestDist:stops[0].dist,
+        source:'실제 (국토부 전국버스정류장)',reliability:'real'};
+    }
+    return null;
+  }catch(e){return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 홍수위험지도 WFS — floodmap.go.kr (Worker: /floodmap-wfs 라우트 필요)
+// ════════════════════════════════════════════
+async function getRealFloodRisk(c){
+  if(!KEYS.flood) return null;
+  try{
+    // 홍수위험지도 WFS — 포인트 인터섹션 쿼리
+    const bbox=`${c.lng-0.005},${c.lat-0.005},${c.lng+0.005},${c.lat+0.005}`;
+    const url=`${WORKER_URL}/floodmap-wfs?SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature`+
+      `&TypeName=flood_risk_area&outputFormat=application/json`+
+      `&BBOX=${bbox}&srsName=EPSG:4326&apiKey=${KEYS.flood}`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
+    const d=await r.json();
+    const features=d.features||[];
+    if(features.length>0){
+      // 위험 등급 속성 추출 (레이어별 속성명 상이할 수 있음)
+      const props=features[0].properties||{};
+      const riskVal=props.RISK_GRADE||props.risk_grade||props.FLOOD_RISK||'';
+      const riskMap={'1':'높음','2':'중간','3':'낮음','H':'높음','M':'중간','L':'낮음'};
+      const risk=riskMap[String(riskVal).trim()]||'중간';
+      return{floodRisk:risk,grade:riskVal,
+        source:'실제 (국토부 홍수위험지도)',reliability:'real'};
+    }
+    // 피처 없음 = 해당 위치는 홍수위험지역 아님
+    return{floodRisk:'낮음',grade:'N',
+      source:'실제 (국토부 홍수위험지도 — 위험구역 미포함)',reliability:'real'};
+  }catch(e){return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 소음측정망 — data.go.kr (Worker: /noise 라우트 필요)
+// 활용신청: 환경부_국가소음측정망정보 조회서비스 (B552584)
+// ════════════════════════════════════════════
+async function getRealNoise(c){
+  if(!KEYS.airkorea) return null;
+  try{
+    const key=encodeURIComponent(KEYS.airkorea);
+    // 가장 가까운 소음 측정소 데이터 조회
+    const url=`${WORKER_URL}/noise?serviceKey=${key}&returnType=json&numOfRows=10&pageNo=1`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+    const d=await r.json();
+    const items=d.response?.body?.items?.item||[];
+    if(items.length===0) return null;
+    // 가장 가까운 측정소 찾기
+    let best=null,bestDist=Infinity;
+    items.forEach(it=>{
+      const la=parseFloat(it.dmX||it.latitude||'0');
+      const lo=parseFloat(it.dmY||it.longitude||'0');
+      const dd=la&&lo?dist(c.lat,c.lng,la,lo):Infinity;
+      if(dd<bestDist){bestDist=dd;best=it;}
+    });
+    if(best&&bestDist<10000){
+      const db=parseFloat(best.noseLev||best.noiseLevel||'0');
+      if(db>0){
+        const grade=db<50?'쾌적':db<65?'보통':db<75?'시끄러움':'매우시끄러움';
+        return{noise:Math.round(db),noiseg:grade,station:best.stationNm||'인근 측정소',
+          dist:Math.round(bestDist),
+          source:'실제 (환경부 소음측정망)',reliability:'real'};
+      }
+    }
+    return null;
+  }catch(e){return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: SGIS 인구통계 — sgisapi.kostat.go.kr (별도 키 필요)
+// 발급: https://sgis.kostat.go.kr/developer/html/newOpenApi/api/develop/accessToken.html
+// ════════════════════════════════════════════
+async function getSgisPopulation(c){
+  if(!KEYS.sgis) return null;
+  try{
+    // 1단계: 액세스 토큰 발급 (consumer_key = consumer_secret = 발급키)
+    const tokenUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/auth/authentication.json`+
+      `?consumer_key=${KEYS.sgis}&consumer_secret=${KEYS.sgis}`;
+    const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(6000)});
+    const td=await tr.json();
+    if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패:',td.errMsg);return null;}
+    const token=td.result.accessToken;
+
+    // 2단계: 좌표 → 행정동 코드 (geocoding)
+    const gcUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/addr/geocodingFull.json`+
+      `?accessToken=${token}&address=${c.lat},${c.lng}&x_coor=${c.lng}&y_coor=${c.lat}&addr_type=20`;
+    const gcr=await fetch(gcUrl,{signal:AbortSignal.timeout(5000)});
+    const gcd=await gcr.json();
+    let admCd='';
+    if(gcd.errCd===0&&gcd.result?.resultdata?.length>0){
+      admCd=gcd.result.resultdata[0].adm_cd||'';
+    }
+
+    // 3단계: 행정동 기반 인구 조회 (2020 인구총조사)
+    if(admCd){
+      const popUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/stat/popltn.json`+
+        `?accessToken=${token}&year=2020&adm_cd=${admCd}&low_search=0`;
+      const pr=await fetch(popUrl,{signal:AbortSignal.timeout(5000)});
+      const pd=await pr.json();
+      if(pd.errCd===0&&pd.result?.length>0){
+        const r=pd.result[0];
+        const totPop=parseInt(r.tot_ppltn||r.ppltn_cnt||'0');
+        const area=parseFloat(r.area||'0');     // km²
+        const popD=area>0?Math.round(totPop/area):null;
+        const aged65=r.aged_65_ppltn_rt!=null?parseFloat(r.aged_65_ppltn_rt):null;
+        const adm_nm=r.adm_nm||admCd;
+        if(totPop>0){
+          return{popD,totPop,aged65Pct:aged65,admNm:adm_nm,
+            source:'실제 (통계청 SGIS 2020 인구총조사)',reliability:'real'};
+        }
+      }
+    }
+
+    // fallback: 격자 인구 (adm_cd 실패 시)
+    const gridUrl=`https://sgisapi.kostat.go.kr/OpenAPI3/stat/gridpop.json`+
+      `?accessToken=${token}&year=2020&lat=${c.lat}&lng=${c.lng}&radius=500`;
+    const gpr=await fetch(gridUrl,{signal:AbortSignal.timeout(5000)});
+    const gpd=await gpr.json();
+    if(gpd.errCd===0&&gpd.result){
+      const totPop=parseInt(gpd.result.tot_ppltn||'0');
+      if(totPop>0){
+        return{popD:null,totPop,aged65Pct:null,admNm:'반경 500m',
+          source:'실제 (통계청 SGIS 격자인구 2020)',reliability:'real'};
+      }
+    }
+    return null;
+  }catch(e){console.warn('SGIS API 오류:',e);return null;}
 }
 
 // ════════════════════════════════════════════
