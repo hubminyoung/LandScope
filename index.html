@@ -864,6 +864,16 @@ async function _doAnalysis(address, coords){
 
   try{
     dataLog=[];  // 매 분석마다 초기화
+    // 분석 시작 시 localStorage에서 키 재확인 (설정 저장 후 바로 분석할 때도 최신값 반영)
+    try{const ls=localStorage;
+      if(ls.getItem('ls_vworld'))    KEYS.vworld    =ls.getItem('ls_vworld');
+      if(ls.getItem('ls_sgis'))      KEYS.sgis      =ls.getItem('ls_sgis');
+      if(ls.getItem('ls_sgis_secret')) KEYS.sgisSecret=ls.getItem('ls_sgis_secret');
+      if(ls.getItem('ls_soilrda'))   KEYS.soilrda   =ls.getItem('ls_soilrda');
+      if(ls.getItem('ls_airkorea'))  KEYS.airkorea  =ls.getItem('ls_airkorea');
+      if(ls.getItem('ls_nibr'))      KEYS.nibr      =ls.getItem('ls_nibr');
+    }catch(e){}
+    console.log('🔑 분석 키 상태 — sgis:',KEYS.sgis?'✅':'❌','sgisSecret:',KEYS.sgisSecret?'✅':'❌','vworld:',KEYS.vworld?'✅':'❌');
     document.getElementById('loadingStep').textContent=STEPS[0];
     const radius = +document.getElementById('radius').value || 500;
 
@@ -4306,25 +4316,41 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
-    // VWorld Data API — Worker /vworld-data 경유 (CORS 우회, 사용자 키 그대로 전달)
-    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng}%20${c.lat})&crs=EPSG:4326&size=10&geometry=false&attribute=true&key=${KEYS.vworld}`;
-    // UQ111 용도지역, UQ112 용도지구(문화재/최고고도/경관지구 등), UQ113 용도구역(개발제한), NSR001 자연공원
+    // VWorld Data API — Worker를 통한 CORS 우회
+    // POINT 쿼리는 강/수역 위 좌표에서 NOT_FOUND 발생 → BBOX로 주변 300m 범위 검색
+    const d=0.003; // 약 300m
+    const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
+    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=${bbox}&crs=EPSG:4326&size=5&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    // UQ111 용도지역, UQ112 용도지구, UQ113 용도구역(개발제한), NSR001 자연공원
+    const fetchVworld=async(url)=>{
+      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+      const txt=await r.text();
+      console.log('🗺️ VWorld 응답(앞 200자):',txt.slice(0,200));
+      return JSON.parse(txt);
+    };
     const [r1,r2,r3,r4]=await Promise.allSettled([
-      fetch(base+'&data=LT_C_UQ111').then(r=>r.json()),
-      fetch(base+'&data=LT_C_UQ112').then(r=>r.json()),
-      fetch(base+'&data=LT_C_UQ113').then(r=>r.json()),
-      fetch(base+'&data=LT_C_NSR001').then(r=>r.json()),
+      fetchVworld(base+'&data=LT_C_UQ111'),
+      fetchVworld(base+'&data=LT_C_UQ112'),
+      fetchVworld(base+'&data=LT_C_UQ113'),
+      fetchVworld(base+'&data=LT_C_NSR001'),
     ]);
+
+    // VWorld 결과 로그
+    console.log('🗺️ VWorld UQ111(용도지역) status:',r1.status, r1.status==='fulfilled'?'응답:'+r1.value?.response?.status:'에러:'+r1.reason?.message);
+    console.log('🗺️ VWorld UQ113(개발제한) status:',r3.status, r3.status==='fulfilled'?'응답:'+r3.value?.response?.status:'에러:'+r3.reason?.message);
 
     let zone='확인필요', greenbelt=false;
     const restr=[];
 
     // ① 용도지역
     if(r1.status==='fulfilled'&&r1.value?.response?.status==='OK'){
-      const f=r1.value.response.result.featureCollection.features||[];
+      const f=r1.value.response.result?.featureCollection?.features||[];
       if(f.length>0){
         const p=f[0].properties;
         zone=p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';
+        console.log('✅ VWorld 용도지역:',zone);
+      }else{
+        console.warn('⚠️ VWorld UQ111: features 배열 비어있음 (해당 BBOX 내 용도지역 없음)');
       }
     }
     // ② 용도지구 (문화재보호구역, 최고고도지구, 경관지구, 방화지구 등)
@@ -4899,8 +4925,9 @@ async function getSgisPopulation(c){
     const gcr=await fetch(gcUrl,{signal:AbortSignal.timeout(6000)});
     const gcd=await gcr.json();
     let admCd='';
+    console.log('🗺️ SGIS geocoding 응답(errCd='+gcd.errCd+'):',JSON.stringify(gcd).slice(0,300));
     if(gcd.errCd===0&&gcd.result?.resultdata?.length>0){
-      admCd=gcd.result.resultdata[0].adm_cd||'';
+      admCd=gcd.result.resultdata[0].adm_cd||gcd.result.resultdata[0].admCd||'';
       console.log('✅ SGIS geocoding 성공, adm_cd=',admCd);
     }
 
@@ -4927,20 +4954,22 @@ async function getSgisPopulation(c){
 
     // fallback: 격자 인구
     const gridUrl=`${W}/sgis/OpenAPI3/stat/gridpop.json`+
-      `?accessToken=${token}&year=2020&lat=${c.lat}&lng=${c.lng}&radius=500`;
+      `?accessToken=${token}&year=2020&lat=${c.lat}&lng=${c.lng}&radius=1000`;
     const gpr=await fetch(gridUrl,{signal:AbortSignal.timeout(6000)});
     const gpd=await gpr.json();
+    console.log('🗺️ SGIS 격자인구 응답(errCd='+gpd.errCd+'):',JSON.stringify(gpd).slice(0,300));
     if(gpd.errCd===0&&gpd.result){
-      const totPop=parseInt(gpd.result.tot_ppltn||'0');
+      const totPop=parseInt(gpd.result.tot_ppltn||gpd.result.totPpltn||'0');
       if(totPop>0){
         console.log('✅ SGIS 격자인구 성공:',totPop,'명');
         // 격자인구 취득 시 생활인구(낮 체류)도 같이 시도
         let livingPop=null;
         try{
           const lvUrl=`${W}/sgis/OpenAPI3/stat/livingpopltn.json`+
-            `?accessToken=${token}&year=2023&month=06&day_cde=1&time_cde=1300&lat=${c.lat}&lng=${c.lng}&radius=500`;
+            `?accessToken=${token}&year=2022&month=06&day_cde=1&time_cde=13&lat=${c.lat}&lng=${c.lng}&radius=1000`;
           const lvr=await fetch(lvUrl,{signal:AbortSignal.timeout(5000)});
           const lvd=await lvr.json();
+          console.log('🗺️ SGIS 생활인구 응답(errCd='+lvd.errCd+'):',JSON.stringify(lvd).slice(0,300));
           if(lvd.errCd===0&&lvd.result?.tot_lvpop_cnt!=null){
             livingPop=parseInt(lvd.result.tot_lvpop_cnt);
             console.log('✅ SGIS 생활인구(낮):',livingPop,'명');
@@ -4954,14 +4983,15 @@ async function getSgisPopulation(c){
     // 최후 fallback: 토큰만 성공, 인구 없음 → 생활인구만 시도
     try{
       const lvUrl=`${W}/sgis/OpenAPI3/stat/livingpopltn.json`+
-        `?accessToken=${token}&year=2023&month=06&day_cde=1&time_cde=1300&lat=${c.lat}&lng=${c.lng}&radius=500`;
+        `?accessToken=${token}&year=2022&month=06&day_cde=1&time_cde=13&lat=${c.lat}&lng=${c.lng}&radius=1000`;
       const lvr=await fetch(lvUrl,{signal:AbortSignal.timeout(5000)});
       const lvd=await lvr.json();
+      console.log('🗺️ SGIS 최후 생활인구(errCd='+lvd.errCd+'):',JSON.stringify(lvd).slice(0,300));
       if(lvd.errCd===0&&lvd.result?.tot_lvpop_cnt!=null){
         const livingPop=parseInt(lvd.result.tot_lvpop_cnt);
         console.log('✅ SGIS 생활인구만 성공:',livingPop,'명');
-        return{popD:null,totPop:null,livingPopDay:livingPop,aged65Pct:null,admNm:'반경 500m',
-          source:'실제 (통계청 SGIS 생활인구 2023)',reliability:'real'};
+        return{popD:null,totPop:null,livingPopDay:livingPop,aged65Pct:null,admNm:'반경 1km',
+          source:'실제 (통계청 SGIS 생활인구 2022)',reliability:'real'};
       }
     }catch(_){}
 
