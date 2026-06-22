@@ -1943,7 +1943,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     air:Math.max(0,Math.min(100,100-(eco.grade-1)*15-(air.pm25>35?20:0)-(air.noise>65?15:0))),
     urban:Math.min(100,Math.max(0,60+(urb.greenPlan?15:0)-urb.restr.length*12)),
     traffic:trf.acc,
-    social:Math.min(100,40+Math.min(40,Math.floor(soc.reviews/100)*3)+(soc.rating>4?10:0)),
+    social:50, // 인구/리뷰 미연동 시 중립값
     water:water.score,
     landscape:lsc.score
   };
@@ -1990,9 +1990,8 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     ],
     social:[
       {factor:'기본 점수',value:'기준',rule:'40점 기본',pts:40},
-      {factor:'리뷰 기반',value:`${soc.reviews}개`,rule:`MIN(리뷰÷100×3, 40) = ${Math.min(40,Math.floor(soc.reviews/100)*3)}점`,pts:Math.min(40,Math.floor(soc.reviews/100)*3)},
-      {factor:'평점 보너스',value:`${soc.rating}점`,rule:'>4.0이면 +10점',pts:soc.rating>4?10:0},
-      {factor:'최종 점수',value:'',rule:'합산 (상한 100점)',pts:sc.social,total:true}
+      {factor:'인구/리뷰',value:'SGIS 연동 시 산정',rule:'인구 연동 후 자동 반영',pts:null},
+      {factor:'최종 점수',value:'',rule:'SGIS 연동 전 중립값 50점',pts:sc.social,total:true}
     ],
     water:[
       {factor:'홍수 위험도',value:water.floodRisk,rule:'높음→페널티 -30, 중간→-18, 낮음→0',pts:null},
@@ -2039,7 +2038,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
 
   if(urb.greenPlan)O.push('도시 공원화 계획 연계 — 행정 지원 가능');
   if(eco.nearHan)O.push('한강 수변 생태축 연계 — 경관 활용 가능');
-  if(soc.reviews>2000)O.push(`리뷰 ${soc.reviews.toLocaleString()}개 — 높은 지역 관심도`);
+  if(soc.totPop>2000)O.push(`반경 내 인구 ${soc.totPop.toLocaleString()}명 — 높은 이용 수요`);
   if(eco.grade>=4)O.push('생태 훼손지 → 복원 선도 사례 도입 기회');
   O.push('기후변화 적응 저영향 개발(LID) 선도 가능');
   if(water.impRatio<60)O.push(`불투수율 ${water.impRatio}% — 투수성 강화 잠재력`);
@@ -2089,9 +2088,9 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
   if(eco.grade<=2)rec='생태 보전형 자연공원';
   else if(eco.nearHan)rec='수변 생태공원';
   else if(['불량','매우불량'].includes(soil.drainage))rec='습지형 생태공원';
-  else if(sc.traffic>70&&soc.popD>15000)rec='도시 활성화 광장형 공원';
-  else if(soc.age['60대 이상']>22)rec='실버 친화형 근린공원';
-  else if(soc.age['10대 이하']>16)rec='가족 복합형 근린공원';
+  else if(sc.traffic>70&&(soc.popD!=null&&soc.popD>15000))rec='도시 활성화 광장형 공원';
+  else if(soc.age&&soc.age['60대 이상']>22)rec='실버 친화형 근린공원';
+  else if(soc.age&&soc.age['10대 이하']>16)rec='가족 복합형 근린공원';
   else rec='다목적 도시 근린공원';
 
   // 추천 신뢰도 및 대안
@@ -2128,7 +2127,7 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   const greenPerPerson = pop500m!=null ? +(siteAreaM2 / Math.max(1, pop500m)).toFixed(1) : null;
   const equityStatus = greenPerPerson==null?'unknown': greenPerPerson >= 3 ? 'good' : greenPerPerson >= 1.5 ? 'caution' : 'poor';
   const equityStrategies = [];
-  if (greenPerPerson < 3) equityStrategies.push('1인당 녹지면적 3㎡ 이상 확보 목표 — 도시공원법 시행규칙 별표3 법정 최소 기준');
+  if (greenPerPerson!=null&&greenPerPerson < 3) equityStrategies.push('1인당 녹지면적 3㎡ 이상 확보 목표 — 도시공원법 시행규칙 별표3 법정 최소 기준');
   if (trf.subDist > 500) equityStrategies.push(`지하철 거리 ${trf.subDist}m — 도보 5분(400m) 이내 접근 경로 개선 검토`);
   const elderPct = soc.age ? (soc.age['60대 이상'] || 0) : 15;
   const childPct = soc.age ? (soc.age['10대 이하'] || 0) : 12;
@@ -2136,10 +2135,10 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   if (equityStrategies.length === 0) equityStrategies.push('법정 기준 충족 — 취약계층 세부 접근로 개선 지속 권장');
   indicators.push({
     key:'equity', icon:'👥', label:'도시공원 접근성',
-    current:`1인당 ${greenPerPerson}㎡ (500m 반경 추정 인구 ${pop500m.toLocaleString()}명)`,
+    current:greenPerPerson!=null?`1인당 ${greenPerPerson}㎡ (500m 반경 추정 인구 ${pop500m.toLocaleString()}명)`:'인구 데이터 미연동 (SGIS 필요)',
     standard:'1인당 3㎡ 이상 (도시지역) / 근린공원 유치거리 500m 이하',
     status: equityStatus,
-    judgment: greenPerPerson >= 3 ? '법정 기준 충족' : greenPerPerson >= 1.5 ? '법정 기준 미달 — 보완 필요' : '법정 기준 크게 미달',
+    judgment: greenPerPerson==null?'SGIS 인구 데이터 연동 후 산정 가능':greenPerPerson >= 3 ? '법정 기준 충족' : greenPerPerson >= 1.5 ? '법정 기준 미달 — 보완 필요' : '법정 기준 크게 미달',
     source:'도시공원 및 녹지 등에 관한 법률 시행규칙 별표3',
     sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=86067',
     strategies: equityStrategies
