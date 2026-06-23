@@ -423,11 +423,11 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <button class="map-btn" onclick="toggleLP()">🗂️ 레이어</button>
       <div class="layer-panel" id="layerPanel">
         <div style="font-size:11px;font-weight:700;color:#546e7a;margin-bottom:8px;">지도 레이어</div>
-        <label class="layer-item"><input type="checkbox" id="l-buf" checked onchange="toggleBuf()"> 분석 반경</label>
-        <label class="layer-item"><input type="checkbox" id="l-eco" onchange="toggleEco()"> 생태 거점</label>
-        <label class="layer-item"><input type="checkbox" id="l-sub" onchange="toggleSub()"> 지하철역</label>
-        <label class="layer-item"><input type="checkbox" id="l-flood" onchange="toggleFlood()"> 홍수 위험지</label>
-        <label class="layer-item"><input type="checkbox" id="l-heat" onchange="toggleHeat()"> 🌡️ 열지도 (도시열섬)</label>
+        <label class="layer-item"><input type="checkbox" id="l-buf" checked onchange="toggleBuf()"> 📍 분석 반경</label>
+        <label class="layer-item"><input type="checkbox" id="l-eco" onchange="toggleEco()"> 🌿 생태 거점 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
+        <label class="layer-item"><input type="checkbox" id="l-sub" onchange="toggleSub()"> 🚇 지하철역 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
+        <label class="layer-item"><input type="checkbox" id="l-flood" onchange="toggleFlood()"> 💧 홍수 위험지 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
+        <label class="layer-item"><input type="checkbox" id="l-heat" onchange="toggleHeat()"> 🌡️ 열지도 (도시열섬) <span style="font-size:9px;color:#455a64">(분석 후)</span></label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">📡 정부 GIS 오버레이 (WMS)</div>
         <label class="layer-item"><input type="checkbox" id="l-egis-eco" onchange="toggleEgisEco()"> 🌿 생태자연도 (환경부)</label>
@@ -746,11 +746,12 @@ function toggleHeat(){
     const {coords:c,ecology:eco,landscape:lsc,water}=analysisResult;
     const pts=generateHeatData(c.lat,c.lng,eco,lsc,water);
     heatLayer=L.heatLayer(pts,{
-      radius:32,
-      blur:22,
+      radius:38,
+      blur:18,
       maxZoom:18,
-      max:1.0,
-      gradient:{0.0:'#4fc3f7',0.25:'#81c784',0.45:'#fff176',0.65:'#ffb74d',0.82:'#ff7043',1.0:'#b71c1c'}
+      max:0.7,
+      minOpacity:0.45,
+      gradient:{0.0:'#2196f3',0.3:'#4caf50',0.5:'#ffeb3b',0.7:'#ff9800',0.85:'#f44336',1.0:'#880e4f'}
     }).addTo(map);
     document.getElementById('heatLegend').style.display='block';
   }else if(heatLayer){
@@ -1257,8 +1258,8 @@ async function _doAnalysis(address, coords){
     if(document.getElementById('l-heat')&&document.getElementById('l-heat').checked){
       const {coords:c2,ecology:eco2,landscape:lsc2,water:w2}=analysisResult;
       heatLayer=L.heatLayer(generateHeatData(c2.lat,c2.lng,eco2,lsc2,w2),{
-        radius:32,blur:22,maxZoom:18,max:1.0,
-        gradient:{0.0:'#4fc3f7',0.25:'#81c784',0.45:'#fff176',0.65:'#ffb74d',0.82:'#ff7043',1.0:'#b71c1c'}
+        radius:38,blur:18,maxZoom:18,max:0.7,minOpacity:0.45,
+        gradient:{0.0:'#2196f3',0.3:'#4caf50',0.5:'#ffeb3b',0.7:'#ff9800',0.85:'#f44336',1.0:'#880e4f'}
       }).addTo(map);
     }
     renderResults(analysisResult);
@@ -3079,7 +3080,7 @@ function updateMap(d){
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
 function renderResults(d){
-  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs}=d;
+  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,osm:osmD}=d;
   const sc=an.scores;
 
   // 기후 요약 카드 HTML
