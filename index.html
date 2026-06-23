@@ -433,6 +433,7 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         <label class="layer-item"><input type="checkbox" id="l-egis-eco" onchange="toggleEgisEco()"> 🌿 생태자연도 (환경부)</label>
         <label class="layer-item"><input type="checkbox" id="l-forest" onchange="toggleForest()"> 🌲 임상도 (산림청)</label>
         <label class="layer-item"><input type="checkbox" id="l-landcover" onchange="toggleLandcover()"> 🏞️ 토지피복도 (환경부)</label>
+        <label class="layer-item"><input type="checkbox" id="l-cadastral" onchange="toggleCadastral()"> 📐 지적편집도 (VWorld)</label>
         <label class="layer-item"><input type="checkbox" id="l-ecvam" onchange="toggleEcvam()"> 🗺️ 환경성평가도 (국토부)</label>
         <label class="layer-item"><input type="checkbox" id="l-ecozone" onchange="toggleEcozone()"> 🦋 생태보전지역 (환경부)</label>
         <label class="layer-item"><input type="checkbox" id="l-ecobank-fish" onchange="toggleEcobank('fish')"> 🐟 생태조사_어류 (에코뱅크)</label>
@@ -527,7 +528,7 @@ function toggleFlood(){
 }
 
 // ── 정부 WMS 오버레이 ──────────────────────────────────
-let egisEcoLayer=null, forestLayer=null, landcoverLayer=null;
+let egisEcoLayer=null, forestLayer=null, landcoverLayer=null, cadastralLayer=null;
 
 function toggleEgisEco(){
   if(document.getElementById('l-egis-eco').checked){
@@ -555,14 +556,28 @@ function toggleForest(){
 
 function toggleLandcover(){
   if(document.getElementById('l-landcover').checked){
-    // 환경부 EGIS — 중분류 토지피복도 WMS
-    landcoverLayer=L.tileLayer.wms(WORKER_URL+'/egis',{
-      layers:'me:LCODE_A',format:'image/png',transparent:true,
+    // 환경부 EGIS MCEE ArcGIS WMS — 토지피복도 (layer 0)
+    landcoverLayer=L.tileLayer.wms(WORKER_URL+'/egis-mcee/services/lc/MapServer/WmsServer',{
+      layers:'0',format:'image/png',transparent:true,
       opacity:0.45,attribution:'© 환경부 EGIS 토지피복도',
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }).addTo(map);
     showWMSToast('🏞️ 토지피복도 (환경부 EGIS)');
   }else if(landcoverLayer){map.removeLayer(landcoverLayer);landcoverLayer=null;}
+}
+
+function toggleCadastral(){
+  if(document.getElementById('l-cadastral').checked){
+    // VWorld 지적편집도 WMS (국토정보지리원 — 필지 경계선)
+    cadastralLayer=L.tileLayer.wms(WORKER_URL+'/vworld-wms',{
+      layers:'lt_c_lscomd',
+      key:KEYS.vworld,
+      format:'image/png',transparent:true,
+      opacity:0.8,attribution:'© VWorld 지적편집도',
+      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }).addTo(map);
+    showWMSToast('📐 지적편집도 (VWorld)');
+  }else if(cadastralLayer){map.removeLayer(cadastralLayer);cadastralLayer=null;}
 }
 
 let ecvamWmsLayer=null, ecozoneWmsLayer=null;
@@ -5154,20 +5169,74 @@ async function getRealEnvGrade(c){
 // Worker /egis 경유 (CORS 우회)
 // ════════════════════════════════════════════
 async function getRealLandcover(c){
-  // EGIS GeoServer WMS GetFeatureInfo — 레이어명 후보 순서대로 시도
-  const EGIS_LAYERS=[
-    'me:LCODE_A',        // 중분류 토지피복도 (일반 명칭)
-    'me:LNLC_A',         // Land Nature Land Cover
-    'me:LSCT_MELT_LNLC', // 환경부 EGIS 중분류
-    'me:LSCT_SMLT_LNLC', // 환경부 EGIS 대분류
-  ];
-  const d=0.0008;
-  const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
+  const d=0.003; // ~300m BBOX
+
+  // ─── ① VWorld LT_C_LNLCMPTN (토지이용현황 — 환경부 토지피복도 동일 분류체계) ────
+  if(KEYS.vworld){
+    try{
+      const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
+      const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json`+
+        `&geomFilter=${bbox}&crs=EPSG:4326&size=3&geometry=false&attribute=true`+
+        `&key=${KEYS.vworld}&data=LT_C_LNLCMPTN`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+      const txt=await r.text();
+      console.log('🗺️ 토지이용현황(VWorld) 응답:', txt.slice(0,200));
+      const d2=JSON.parse(txt);
+      if(d2.response?.status==='OK'){
+        const features=d2.response.result?.featureCollection?.features||[];
+        if(features.length>0){
+          const p=features[0].properties||{};
+          const code=String(p.LNLC_CD||p.lnlc_cd||p.LC_TPCD||'');
+          const name=p.LNLC_NM||p.lnlc_nm||p.LC_TPNM||p.CLS_NM||'';
+          if(code||name){
+            const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지')||name.includes('산지');
+            const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호수')||name.includes('하천');
+            console.log('✅ 토지이용현황(VWorld):',code,name);
+            return{code,name,isEco:eco,isWater:water,layer:'VWorld LT_C_LNLCMPTN',
+              source:'실제 (VWorld 토지이용현황)',reliability:'real'};
+          }
+        }
+      }
+    }catch(e){console.warn('VWorld 토지이용현황 실패:',e.message);}
+  }
+
+  // ─── ② 환경부 EGIS MCEE ArcGIS REST identify (토지피복도) ───────────────────────
+  try{
+    const ext=`${c.lng-0.001},${c.lat-0.001},${c.lng+0.001},${c.lat+0.001}`;
+    const geom=encodeURIComponent(JSON.stringify({x:c.lng,y:c.lat}));
+    const url=`${WORKER_URL}/egis-mcee/rest/services/lc/MapServer/identify`+
+      `?f=json&geometry=${geom}&geometryType=esriGeometryPoint`+
+      `&layers=all&tolerance=5&mapExtent=${ext}&imageDisplay=100,100,96`+
+      `&returnGeometry=false&sr=4326`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
+    const txt=await r.text();
+    console.log('🗺️ 토지피복 MCEE ArcGIS 응답:', txt.slice(0,300));
+    if(txt&&!txt.trim().startsWith('<')){
+      const d2=JSON.parse(txt);
+      const results=d2.results||[];
+      if(results.length>0){
+        const attrs=results[0].attributes||{};
+        const code=String(attrs.LNLC_CD||attrs.LC_CODE||attrs.CODE||attrs.FID||'');
+        const name=attrs.LNLC_NM||attrs.LC_NAME||attrs.CLASSNAME||attrs.CLASS_NM||results[0].layerName||'';
+        if(code||name){
+          const eco=code.startsWith('3')||name.includes('산림')||name.includes('초지')||name.includes('산지');
+          const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호');
+          console.log('✅ 토지피복 MCEE:',code,name);
+          return{code,name,isEco:eco,isWater:water,layer:'MCEE ArcGIS',
+            source:'실제 (환경부 EGIS 토지피복도)',reliability:'real'};
+        }
+      }
+    }
+  }catch(e){console.warn('EGIS MCEE identify 실패:',e.message);}
+
+  // ─── ③ EGIS GeoServer WMS GetFeatureInfo (마지막 시도) ───────────────────────────
+  const EGIS_LAYERS=['me:LCODE_A','me:LNLC_A','me:LSCT_MELT_LNLC'];
+  const bbox2=`${c.lng-0.0008},${c.lat-0.0008},${c.lng+0.0008},${c.lat+0.0008}`;
   for(const layer of EGIS_LAYERS){
     try{
       const url=`${WORKER_URL}/egis?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
         `&LAYERS=${layer}&QUERY_LAYERS=${layer}`+
-        `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
+        `&BBOX=${bbox2}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
         `&INFO_FORMAT=application/json`;
       const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
       const text=await r.text();
@@ -5175,13 +5244,13 @@ async function getRealLandcover(c){
       const d2=JSON.parse(text);
       const features=d2.features||[];
       if(!features.length) continue;
-      const props=features[0].properties||features[0];
-      const code=String(props.LNLC_CD||props.lnlc_cd||props.L2_CODE||props.CODE||props.code||'');
-      const name=props.LNLC_NM||props.lnlc_nm||props.L2_NM||props.CLS_NM||props.cls_nm||props.NAME||'';
+      const props=features[0].properties||{};
+      const code=String(props.LNLC_CD||props.lnlc_cd||props.L2_CODE||props.CODE||'');
+      const name=props.LNLC_NM||props.lnlc_nm||props.L2_NM||props.CLS_NM||'';
       if(!name&&!code) continue;
       const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
-      const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호');
-      console.log(`✅ 토지피복 (${layer}):`,code,name);
+      const water=code.startsWith('5')||name.includes('수계')||name.includes('강');
+      console.log(`✅ 토지피복 GeoServer (${layer}):`,code,name);
       return{code,name,isEco:eco,isWater:water,layer,
         source:'실제 (환경부 EGIS 토지피복도)',reliability:'real'};
     }catch(e){console.warn(`토지피복 ${layer} 실패:`,e.message);}
