@@ -682,19 +682,39 @@ map.on('click',async function(e){
   // 클릭 모드 종료
   togglePickMode();
   // 역지오코딩으로 주소 채우기 (실패해도 괜찮음)
+  const addrField=document.getElementById('address');
+  addrField.value=`위도 ${lat.toFixed(6)}, 경도 ${lng.toFixed(6)}`; // 기본값
   try{
-    const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko`,
-      {headers:{'User-Agent':'LandScopeKR/1.0'}});
-    const d=await r.json();
-    if(d&&d.display_name){
-      const short=d.address?(d.address.road||d.address.quarter||d.address.suburb||d.address.city||'')+' (지도 클릭)':'지도 클릭 지점';
-      document.getElementById('address').value=short;
+    if(KEYS.vworld){
+      // VWorld 역지오코딩 (지번 주소 우선) — JSONP 직접 호출
+      const revUrl=`https://api.vworld.kr/req/address?service=address&request=getaddress&type=BOTH&crs=epsg:4326&point=${lng},${lat}&format=json&key=${KEYS.vworld}`;
+      const d=await vworldJsonp(revUrl);
+      if(d?.response?.status==='OK'){
+        const items=Array.isArray(d.response.result)?d.response.result:[d.response.result];
+        const parcel=items.find(i=>i.type==='parcel'||i.type==='PARCEL');
+        const road=items.find(i=>i.type==='road'||i.type==='ROAD');
+        const chosen=parcel||road; // 지번 주소 우선
+        if(chosen?.text){
+          addrField.value=chosen.text;
+          console.log('✅ VWorld 역지오코딩:', chosen.text);
+        }
+      }
+    }else{
+      // VWorld 키 없을 때 Nominatim 폴백
+      const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko`,
+        {headers:{'User-Agent':'LandScopeKR/1.0'}});
+      const d=await r.json();
+      if(d?.address){
+        const short=(d.address.road||d.address.quarter||d.address.suburb||d.address.city||'')+' 일대';
+        if(short.trim()!=='일대') addrField.value=short;
+      }
     }
   }catch(err){
-    document.getElementById('address').value=`위도 ${lat.toFixed(5)}, 경도 ${lng.toFixed(5)}`;
+    console.warn('역지오코딩 실패:', err.message);
+    // 기본값(위도/경도) 유지
   }
   // 직접 클릭한 좌표로 분석 (geocode 생략)
-  runAnalysisAt({lat,lng,name:`지도 클릭 (${lat.toFixed(5)}, ${lng.toFixed(5)})`});
+  runAnalysisAt({lat,lng,name:addrField.value});
 });
 
 // ── 열지도 (도시열섬 Urban Heat Island) ──────────────────
@@ -3429,8 +3449,12 @@ function renderResults(d){
       </div>
 
       <div class="tab-content" id="tab-urban">
-        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}</span></div>
+        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
         <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
+        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목 (토지이용상황)</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
+        ${urb.nedRoadSide?`<div class="data-row"><span class="data-key">도로접면</span><span class="data-val">${urb.nedRoadSide==='맹지'?badge('맹지','red'):urb.nedRoadSide}</span></div>`:''}
+        ${urb.nedTerrainH?`<div class="data-row"><span class="data-key">지형높이</span><span class="data-val">${urb.nedTerrainH}${urb.nedTerrainF?` · ${urb.nedTerrainF}`:''}</span></div>`:''}
+
         <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'})</span></div>
         <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소':badge('미연동','grey')}</span></div>
         <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
@@ -4439,6 +4463,55 @@ setTimeout(updateHeaderApiCount, 100);
 async function getRealUrban(c){
   if(!KEYS.vworld) return null;
   try{
+    // ── 0) NED WFS 토지이용계획 (가장 신뢰성 높은 용도지역 데이터) ──
+    // 매우 작은 BBOX로 해당 필지 조회 → prpos_area_dstrc_nm_list 파싱
+    let nedZone='', nedZoneList=[], nedLandUse='', nedRoadSide='', nedTerrainH='', nedTerrainF='';
+    try{
+      const nd=0.001; // ~100m BBOX (정확한 필지 조회)
+      // NED WFS bbox 파라미터: minLat,minLng,maxLat,maxLng,EPSG:4326 (Y,X 순서)
+      const nedBbox=`${(c.lat-nd).toFixed(6)},${(c.lng-nd).toFixed(6)},${(c.lat+nd).toFixed(6)},${(c.lng+nd).toFixed(6)},EPSG:4326`;
+      // 토지이용계획WFS + 토지특성WFS 병렬 조회
+      const [nedR1,nedR2]=await Promise.allSettled([
+        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandUseWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=5&output=application/json&key=${KEYS.vworld}`,{signal:AbortSignal.timeout(8000)}),
+        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandCharacteristicsWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=3&output=application/json&key=${KEYS.vworld}`,{signal:AbortSignal.timeout(8000)}),
+      ]);
+      // ① 토지이용계획WFS → 용도지역지구명 목록
+      if(nedR1.status==='fulfilled'){
+        const txt=await nedR1.value.text();
+        console.log('🗺️ NED WFS(토지이용계획) 앞 300자:', txt.slice(0,300));
+        const wfsD=JSON.parse(txt);
+        const feats=wfsD?.features||[];
+        if(feats.length>0){
+          const p=feats[0].properties||{};
+          const raw=p.prpos_area_dstrc_nm_list||p.PRPOS_AREA_DSTRC_NM_LIST||'';
+          if(raw){
+            const allZones=raw.split(',').map(s=>s.trim()).filter(Boolean);
+            nedZoneList=allZones;
+            // 첫 번째 '지역' 포함 항목 = 주용도지역
+            nedZone=allZones.find(z=>z.includes('지역'))||allZones[0]||'';
+            console.log('✅ NED WFS 용도지역지구:', raw);
+          }
+        }
+      }
+      // ② 토지특성WFS → 지목·지형·도로접면
+      if(nedR2.status==='fulfilled'){
+        const txt=await nedR2.value.text();
+        console.log('🗺️ NED WFS(토지특성) 앞 300자:', txt.slice(0,300));
+        const wfsD=JSON.parse(txt);
+        const feats=wfsD?.features||[];
+        if(feats.length>0){
+          const p=feats[0].properties||{};
+          nedLandUse=p.lad_use_sittn_nm||p.LAD_USE_SITTN_NM||''; // 토지이용상황 (대지/전/답/임야)
+          nedRoadSide=p.road_side_code_nm||p.ROAD_SIDE_CODE_NM||''; // 도로접면 (광대로/중로/소로/맹지)
+          nedTerrainH=p.tpgrph_hg_code_nm||p.TPGRPH_HG_CODE_NM||''; // 지형높이 (평지/구릉지/급경사)
+          nedTerrainF=p.tpgrph_frm_code_nm||p.TPGRPH_FRM_CODE_NM||''; // 지형형상
+          console.log('✅ NED WFS 토지특성 — 지목:',nedLandUse,'도로:',nedRoadSide,'지형:',nedTerrainH);
+        }
+      }
+    }catch(nedErr){
+      console.warn('NED WFS 실패 (Data API로 폴백):', nedErr.message);
+    }
+
     // VWorld Data API — Worker를 통한 CORS 우회
     // POINT 쿼리는 강/수역 위 좌표에서 NOT_FOUND 발생 → BBOX로 주변 300m 범위 검색
     const d=0.003; // 약 300m
@@ -4462,18 +4535,21 @@ async function getRealUrban(c){
     console.log('🗺️ VWorld UQ111(용도지역) status:',r1.status, r1.status==='fulfilled'?'응답:'+r1.value?.response?.status:'에러:'+r1.reason?.message);
     console.log('🗺️ VWorld UQ113(개발제한) status:',r3.status, r3.status==='fulfilled'?'응답:'+r3.value?.response?.status:'에러:'+r3.reason?.message);
 
-    let zone='확인필요', greenbelt=false;
+    // NED WFS 결과를 기본값으로 설정 (더 신뢰할 수 있으면 Data API로 덮어쓰지 않음)
+    let zone=nedZone||'확인필요', greenbelt=false;
     const restr=[];
+    // NED WFS에서 가져온 지구 목록 (용도지역 제외한 나머지 항목들)
+    nedZoneList.filter(z=>z!==nedZone).forEach(zn=>{ if(!restr.includes(zn)) restr.push(zn); });
 
-    // ① 용도지역
-    if(r1.status==='fulfilled'&&r1.value?.response?.status==='OK'){
+    // ① 용도지역 (NED WFS 실패 시 Data API UQ111로 보완)
+    if((zone==='확인필요'||!zone)&&r1.status==='fulfilled'&&r1.value?.response?.status==='OK'){
       const f=r1.value.response.result?.featureCollection?.features||[];
       if(f.length>0){
         const p=f[0].properties;
         zone=p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';
-        console.log('✅ VWorld 용도지역:',zone);
+        console.log('✅ VWorld Data API 용도지역(폴백):',zone);
       }else{
-        console.warn('⚠️ VWorld UQ111: features 배열 비어있음 (해당 BBOX 내 용도지역 없음)');
+        console.warn('⚠️ VWorld UQ111: features 배열 비어있음');
       }
     }
     // ② 용도지구 (문화재보호구역, 최고고도지구, 경관지구, 방화지구 등)
@@ -4542,12 +4618,21 @@ async function getRealUrban(c){
     if(inNaturalPark) imp.push('🏞️ 자연공원 내 — 공원계획 기준 적용, 환경부 심의 필요');
     if(zone.includes('상업')) imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
     if(zone.includes('녹지')||zone.includes('농림')) imp.push('🌿 녹지/농림 지역 → 생태·농업적 활용 권장');
+    if(zone.includes('관리')) imp.push('🔶 관리지역 → 개발행위허가 기준 적용');
+    if(zone.includes('자연환경보전')) imp.push('🌊 자연환경보전지역 → 개발 강력 규제');
     districtNames.filter(n=>n.includes('문화재')).forEach(n=>imp.push(`🏛️ ${n} — 역사경관 고려, 문화재청 협의 필요`));
     districtNames.filter(n=>n.includes('최고고도')).forEach(n=>imp.push(`📐 ${n} — 높이 제한 검토 필요`));
     districtNames.filter(n=>n.includes('경관')).forEach(n=>imp.push(`🎨 ${n} — 경관심의 대상`));
+    // NED WFS 토지특성 implication
+    if(nedRoadSide==='맹지') imp.push('⚠️ 맹지 — 도로 접면 없음, 개발허가 어려움');
+    else if(nedRoadSide) imp.push(`🛣️ 도로접면: ${nedRoadSide}`);
+    if(nedTerrainH&&nedTerrainH!=='평지') imp.push(`⛰️ 지형: ${nedTerrainH}${nedTerrainF?` (${nedTerrainF})`:''} — 개발비용 가산 가능`);
+    if(nedLandUse&&!['대지','잡종지'].includes(nedLandUse)) imp.push(`📋 지목: ${nedLandUse} — 용도변경(형질변경) 검토 필요`);
 
+    const srcParts=nedZone?'VWorld 국가중점데이터 WFS(NED)+LT_C_UQ111~NSR001':'VWorld LT_C_UQ111+UQ112+UQ113+NSR001';
     return{zone,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
-      source:'실제 (브이월드 LT_C_UQ111+UQ112+UQ113+NSR001)',reliability:'real'};
+      nedLandUse,nedRoadSide,nedTerrainH,nedTerrainF,nedZoneList,
+      source:`실제 (${srcParts})`,reliability:'real'};
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
 }
 
