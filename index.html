@@ -383,6 +383,7 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <input class="address-input" id="address" type="text"
              placeholder="주소 입력 (예: 부산 해운대, 제주 함덕해변, 강릉 경포대)"
              value=""
+             oninput="window._savedMapCoords=null"
              onkeydown="if(event.key==='Enter')runAnalysis()">
 
       <div class="controls-row">
@@ -799,6 +800,14 @@ const STEPS=['🗺️ OSM 실제 지도 데이터 수집 중…','🌤️ 기상
 // 지도 클릭 시 바로 좌표로 분석 (geocode 생략)
 async function runAnalysisAt(coords){
   const address=document.getElementById('address').value||`${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
+  // 주소 필드에 좌표 문자열 저장 → 이후 분석 버튼 눌러도 같은 좌표 사용
+  // (역지오코딩 이름이 있으면 유지, 없으면 좌표 직접 저장)
+  const addrField=document.getElementById('address');
+  if(!addrField.value||addrField.value.startsWith('위도')){
+    addrField.value=`위도 ${coords.lat.toFixed(6)}, 경도 ${coords.lng.toFixed(6)}`;
+  }
+  // _savedCoords에 좌표 보관 → runAnalysis에서 재지오코딩 없이 바로 사용
+  window._savedMapCoords=coords;
   await _doAnalysis(address, coords);
 }
 
@@ -811,9 +820,18 @@ async function runAnalysis(){
   document.getElementById('loadingMsg').textContent='위치 검색 중...';
   document.getElementById('loadingStep').textContent='Nominatim 지오코딩 (한국 지역 우선)';
   try{
-    const coords=await geocode(address);
+    // 지도 클릭으로 저장된 좌표가 있고 주소 필드가 그 좌표 문자열이면 재지오코딩 생략
+    let coords;
+    if(window._savedMapCoords){
+      const savedAddr=`위도 ${window._savedMapCoords.lat.toFixed(6)}, 경도 ${window._savedMapCoords.lng.toFixed(6)}`;
+      if(address===savedAddr||address.startsWith('위도 ')&&address.includes(window._savedMapCoords.lat.toFixed(4))){
+        coords=window._savedMapCoords;
+        console.log('✅ 지도 클릭 좌표 재사용 (재지오코딩 생략):', coords);
+      }
+    }
+    if(!coords) coords=await geocode(address);
+    window._savedMapCoords=null; // 주소 변경 시 초기화
     ld.style.display='none'; btn.disabled=false;
-    // 지도에 preview 핀 표시 후 확인 단계
     showLocationPreview(address, coords);
   }catch(e){
     ld.style.display='none'; btn.disabled=false;
@@ -1313,7 +1331,22 @@ function parseJibun(addr){
 async function geocode(address){
   const addr=address.trim();
 
-  // ── 1) 카카오 addressSearch (도로명+지번 DB) ─────────────
+  // ── 0) 좌표 직접 입력 처리 — "위도 X 경도 Y" / "X, Y" 형식 ──
+  // 지도 클릭 후 역지오코딩 실패 시 저장된 좌표 문자열 or 사용자 직접 입력 좌표
+  const coordRe=/(?:위도\s*)?(3[3-9]\.[\d]{3,})[,\s]+(?:경도\s*)?(12[4-9]\.[\d]{3,})/;
+  const cm=addr.match(coordRe);
+  if(cm){
+    const lat=parseFloat(cm[1]),lng=parseFloat(cm[2]);
+    if(lat>=33&&lat<=39&&lng>=124&&lng<=132){
+      console.log('✅ 좌표 직접 파싱:', lat, lng);
+      return{lat,lng,name:addr,fullName:addr,_fromCoord:true};
+    }
+  }
+
+  // 지번 주소 여부 판별 (끝이 숫자[-숫자] → 지번/지번대)
+  const isJibun=parseJibun(addr)!==null;
+
+  // ── 1) 카카오 addressSearch (도로명+지번 DB) — 가장 정확 ──
   const kakaoOk=await ensureKakao();
   if(kakaoOk){
     // 1a) 그대로 검색
@@ -1331,22 +1364,41 @@ async function geocode(address){
       }
     }catch(e){console.warn('Kakao addressSearch 실패:',e);}
 
-    // 1b) 지번 패턴이면 keywordSearch 시도 (더 유연)
-    try{
-      const r2=await new Promise((res,rej)=>{
-        new kakao.maps.services.Places().keywordSearch(addr,(r,s)=>{
-          s===kakao.maps.services.Status.OK?res(r):rej(s);
-        },{size:1});
-      });
-      if(r2&&r2.length>0){
-        const lat=parseFloat(r2[0].y),lng=parseFloat(r2[0].x);
-        const name=r2[0].place_name||r2[0].address_name||addr;
-        console.log('✅ Kakao keywordSearch:', name);
-        return{lat,lng,name,fullName:r2[0].address_name||name};
-      }
-    }catch(e){console.warn('Kakao keywordSearch 실패:',e);}
+    // 1b) 지번 주소가 아닌 경우만 keywordSearch — 지번에 쓰면 엉뚱한 POI 반환 위험
+    if(!isJibun){
+      try{
+        const r2=await new Promise((res,rej)=>{
+          new kakao.maps.services.Places().keywordSearch(addr,(r,s)=>{
+            s===kakao.maps.services.Status.OK?res(r):rej(s);
+          },{size:1});
+        });
+        if(r2&&r2.length>0){
+          const lat=parseFloat(r2[0].y),lng=parseFloat(r2[0].x);
+          const name=r2[0].place_name||r2[0].address_name||addr;
+          console.log('✅ Kakao keywordSearch(POI):', name);
+          return{lat,lng,name,fullName:r2[0].address_name||name};
+        }
+      }catch(e){console.warn('Kakao keywordSearch 실패:',e);}
+    }
 
-    // 1c) 지번이면 동/리 이름만으로 대략 위치
+    // 1c) 지번이면 VWorld PARCEL 우선 시도 (Kakao보다 지번 정확도 높음)
+    if(isJibun&&KEYS.vworld){
+      try{
+        const url=`https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(addr)}&refine=true&simple=false&format=json&type=PARCEL&key=${KEYS.vworld}`;
+        const d=await vworldJsonp(url);
+        if(d.response&&d.response.status==='OK'&&d.response.result){
+          const pt=d.response.result.point;
+          const lng=parseFloat(pt.x),lat=parseFloat(pt.y);
+          if(lat>=33&&lat<=39&&lng>=124&&lng<=132){
+            const refined=d.response.refined?.text||addr;
+            console.log('✅ VWorld PARCEL (early):', refined);
+            return{lat,lng,name:refined,fullName:refined};
+          }
+        }
+      }catch(e){console.warn('VWorld PARCEL early 실패:', e.message);}
+    }
+
+    // 1d) 지번이면 동/리 이름만으로 대략 위치
     const jb=parseJibun(addr);
     if(jb){
       try{
@@ -1357,7 +1409,7 @@ async function geocode(address){
         });
         if(r3&&r3.length>0){
           const lat=parseFloat(r3[0].y),lng=parseFloat(r3[0].x);
-          const name=(r3[0].address_name||jb.area)+' '+jb.lot+' (동/리 기준)';
+          const name=(r3[0].address_name||jb.area)+' '+jb.lot+' (동/리 기준 — 지도에서 직접 선택 권장)';
           console.log('✅ Kakao 동/리 fallback:', name);
           return{lat,lng,name,fullName:name};
         }
@@ -1367,7 +1419,7 @@ async function geocode(address){
     console.warn('카카오 SDK 미로드 — VWorld/Nominatim 사용');
   }
 
-  // ── 2) VWorld JSONP (지번 특화) ──────────────────────────
+  // ── 2) VWorld JSONP (지번 특화, 카카오 실패 시 최종 시도) ──
   if(KEYS.vworld){
     for(const type of ['PARCEL','ROAD']){
       try{
@@ -1389,9 +1441,8 @@ async function geocode(address){
   // ── 3) Nominatim 폴백 (동/리 이름만 검색, 지번 제외) ────
   const KR_BOX='124.5,33.0,132.0,38.9';
   const jb2=parseJibun(addr);
-  // 지번 패턴이면 동/리 이름으로 축약
   const queries=jb2
-    ?[addr+', 대한민국', jb2.area+', 대한민국', jb2.area]
+    ?[jb2.area+', 대한민국', jb2.area]  // 지번은 동/리명만 (원본 전체 검색 제외 — Nominatim 지번 인식 불가)
     :[addr+', 대한민국', addr];
   for(const q of queries){
     try{
@@ -1402,7 +1453,7 @@ async function geocode(address){
       if(valid.length>0){
         const v=valid[0];const a=v.address||{};
         const shortName=[a.road||a.amenity||'',a.quarter||a.suburb||'',a.city||a.town||a.county||''].filter(Boolean).join(' ')||v.display_name.split(',')[0];
-        const suffix=jb2&&q!==addr?' ('+jb2.lot+' 번지 근처)':'';
+        const suffix=jb2?' ('+jb2.lot+' 번지 근처 — 지도에서 직접 선택 권장)':'';
         return{lat:parseFloat(v.lat),lng:parseFloat(v.lon),name:shortName+suffix,fullName:v.display_name};
       }
     }catch(e){console.warn('Nominatim 실패:',q,e);}
