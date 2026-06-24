@@ -3735,8 +3735,7 @@ function renderResults(d){
         ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>`;
-        })()}
+        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>
         `:(()=>{
           const hzTemp={'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'};
           return `
