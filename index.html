@@ -838,19 +838,18 @@ async function runAnalysis(){
   btn.disabled=true;
   const ld=document.getElementById('loading'); ld.style.display='flex';
   document.getElementById('loadingMsg').textContent='위치 검색 중...';
-  document.getElementById('loadingStep').textContent='Nominatim 지오코딩 (한국 지역 우선)';
+  document.getElementById('loadingStep').textContent='주소 지오코딩 중...';
   try{
-    // 지도 클릭으로 저장된 좌표가 있고 주소 필드가 그 좌표 문자열이면 재지오코딩 생략
+    // ① _savedMapCoords가 있으면 무조건 재사용 — 주소 형식(지번/좌표/역지오코딩 결과) 무관
+    //   (사용자가 직접 주소를 수정하면 oninput에서 _savedMapCoords=null 처리됨)
     let coords;
     if(window._savedMapCoords){
-      const savedAddr=`위도 ${window._savedMapCoords.lat.toFixed(6)}, 경도 ${window._savedMapCoords.lng.toFixed(6)}`;
-      if(address===savedAddr||address.startsWith('위도 ')&&address.includes(window._savedMapCoords.lat.toFixed(4))){
-        coords=window._savedMapCoords;
-        console.log('✅ 지도 클릭 좌표 재사용 (재지오코딩 생략):', coords);
-      }
+      coords=window._savedMapCoords;
+      console.log('✅ 저장된 좌표 재사용 (재지오코딩 생략):', coords.lat.toFixed(6), coords.lng.toFixed(6));
+    } else {
+      coords=await geocode(address);
     }
-    if(!coords) coords=await geocode(address);
-    window._savedMapCoords=null; // 주소 변경 시 초기화
+    window._savedMapCoords=null; // 소비 후 초기화
     ld.style.display='none'; btn.disabled=false;
     showLocationPreview(address, coords);
   }catch(e){
@@ -888,6 +887,8 @@ function confirmLocation(){
   document.getElementById('locConfirm').style.display='none';
   if(previewMarker){map.removeLayer(previewMarker);previewMarker=null;}
   if(pendingCoords&&pendingAddress){
+    // 확인된 좌표를 저장 → 이후 분석 버튼 재클릭 시 재지오코딩 없이 동일 좌표 사용
+    window._savedMapCoords=pendingCoords;
     _doAnalysis(pendingAddress, pendingCoords);
   }
 }
