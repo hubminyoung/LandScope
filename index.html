@@ -907,7 +907,10 @@ function cancelLocation(){
   pendingCoords=null; pendingAddress=null;
 }
 
+let _analysisRunning=false;
 async function _doAnalysis(address, coords){
+  if(_analysisRunning){ console.warn('⚠️ 분석 중 — 중복 실행 차단'); return; }
+  _analysisRunning=true;
   const btn=document.getElementById('analyzeBtn');
   btn.disabled=true;
   document.getElementById('emptyState').style.display='none';
@@ -1183,6 +1186,34 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://soil.rda.go.kr/soil/',verifyLabel:'흙토람 직접 확인'});
     }
 
+    // ── 농경지화학성 V2 (pH·유기물·유효인산) + 지하수위 병렬 조회 ──
+    const [soilChemRes, gwRes] = await Promise.allSettled([
+      getRealSoilChem(pnu),
+      getRealGroundwater(coords)
+    ]);
+    const soilChem = soilChemRes.status==='fulfilled' ? soilChemRes.value : null;
+    const gwReal   = gwRes.status==='fulfilled'       ? gwRes.value       : null;
+    if(soilChem){
+      if(soilChem.ph!=null)  soil.ph=soilChem.ph;
+      if(soilChem.om!=null)  soil.om=soilChem.om;
+      soil.ap=soilChem.ap;
+      soil.soilChemSource=soilChem.source;
+      dataLog.push({category:'토양화학성 (농진청 V2)',icon:'🧪',api:'농촌진흥청 농경지화학성 통계 V2',
+        url:'https://apis.data.go.kr/1390802/SoilEnviron/SoilExamStat/V2',
+        note:`법정동코드(${soilChem.bjdCd}) 기반 pH·유기물·유효인산 통계`,
+        values:`pH ${soilChem.ph??'—'} / 유기물 ${soilChem.om??'—'}g/kg / 유효인산 ${soilChem.ap??'—'}mg/kg`,
+        status:'real',verifyUrl:'https://soil.rda.go.kr/',verifyLabel:'흙토람 확인'});
+    }
+    if(gwReal){
+      soil.gwReal=gwReal;
+      soil.gw=gwReal.depth??gwReal.level??soil.gw; // 실측값으로 업데이트
+      dataLog.push({category:'지하수위 (국가지하수)',icon:'💧',api:'국가지하수정보시스템',
+        url:'https://www.gims.go.kr/',
+        note:`최근접 관측정 "${gwReal.wellName}" (${gwReal.dist}m)`,
+        values:`지하수위 ${gwReal.level}m EL / 심도 ${gwReal.depth??'—'}m`,
+        status:'real',verifyUrl:'https://www.gims.go.kr/',verifyLabel:'지하수정보시스템'});
+    }
+
     // ── 서식종: NIBR(전국) + 경기도 보호종/보호수(경기도 한정) 병렬 조회 ──
     const [realSpecies, ggProtected] = await Promise.allSettled([
       getRealSpeciesNIBR(coords),
@@ -1317,6 +1348,8 @@ async function _doAnalysis(address, coords){
     clearInterval(timer);ld.style.display='none';btn.disabled=false;
     alert('분석 오류: '+e.message);
     document.getElementById('emptyState').style.display='flex';
+  } finally {
+    _analysisRunning=false;
   }
 }
 document.getElementById('address').addEventListener('keydown',e=>{if(e.key==='Enter')runAnalysis();});
@@ -1733,23 +1766,32 @@ async function getKMAClimateSummary(c){
     //   ③ stn_id 지정 시 DST 컬럼 없음          → 필드명 기반 파싱 우선
     // 실제 헤더 예: # YEAR STN_ID LAT LON ALTD WS_YAVG WS_INS_MAX ... WD_FRQ WS_MIX WD_MIX=
     const parseKMA=(txt)=>{
-      const lines=txt.split('\n');
+      // BOM 제거 + 줄 분리
+      const lines=txt.replace(/^﻿/,'').split(/\r?\n/);
       let headers=[];
       const rows=[];
       for(const line of lines){
         // 줄 끝 = 제거 후 trim
-        const t=line.trim().replace(/=+$/, '');
+        const t=line.trim().replace(/=+$/, '').trim();
         if(!t) continue;
         if(t.startsWith('#')){
-          // 마지막 # 줄의 대문자 식별자 토큰들이 필드명
+          // 마지막 # 줄에서 필드명 추출
           const candidate=t.replace(/^#+\s*/,'').trim();
           const parts=candidate.split(/\s+/).filter(Boolean);
-          if(parts.length>3 && /^[A-Z_\/0-9]+$/.test(parts[0])) headers=parts;
+          // 대소문자 무관, 첫 토큰이 영문+숫자+_ 조합이면 헤더로 인정
+          if(parts.length>3 && /^[A-Za-z_\/0-9]+$/.test(parts[0])){
+            headers=parts.map(p=>p.toUpperCase()); // 대문자 정규화
+          }
         } else {
           const vals=t.split(/\s+/).filter(Boolean);
           if(vals.length>3){
             const row={};
-            headers.forEach((h,i)=>{ if(i<vals.length) row[h]=vals[i]; });
+            if(headers.length>0){
+              headers.forEach((h,i)=>{ if(i<vals.length) row[h]=vals[i]; });
+            } else {
+              // 헤더 인식 실패 시 인덱스 키로 폴백
+              vals.forEach((v,i)=>{ row['_'+i]=v; });
+            }
             rows.push(row);
           }
         }
@@ -1770,8 +1812,9 @@ async function getKMAClimateSummary(c){
       // 필드명 기반 우선, 실패 시 인덱스 폴백 (DST 없으므로 col5~12)
       // 실제 컬럼: YEAR(0) STN(1) LAT(2) LON(3) ALTD(4) TA_YAVG(5) TMX_YAVG(6) TMN_YAVG(7) TMX(8) OCDT(9) TA_DAVG_MAX(10) OCDT(11) TMN(12)
       const getCol=(r,field,idx)=>{
-        if(r[field]!==undefined) return kmaNum(r[field]);
-        return kmaNum(Object.values(r)[idx]);
+        if(r[field]!==undefined) return kmaNum(r[field]);       // 헤더 기반
+        if(r['_'+idx]!==undefined) return kmaNum(r['_'+idx]);  // 헤더 없을 때 인덱스 폴백
+        return kmaNum(Object.values(r)[idx]);                   // Object.values 폴백
       };
       const yearMeans  =rows.map(r=>getCol(r,'TA_YAVG',5)).filter(v=>!isNaN(v));
       const yearMaxAvgs=rows.map(r=>getCol(r,'TMX_YAVG',6)).filter(v=>!isNaN(v));  // 연평균 최고기온
@@ -3781,10 +3824,12 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth!=null?(soil.effectiveDepth<25?`<span style="color:#ef9a9a;font-weight:600">매우 얕음 (${soil.effectiveDepth}cm) ⚠️</span>`:soil.effectiveDepth<50?`얕음 (${soil.effectiveDepth}cm)`:`${soil.effectiveDepth}cm`):'—'}</span></div>
         <div class="data-row"><span class="data-key">배수 (공식)</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}</span></div>
         ${soil.drainageNote?`<div style="font-size:10px;color:#ffcc80;padding:2px 0 4px">⚠️ ${soil.drainageNote}</div>`:''}
-        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}</span></div>
-        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}%</span></div>
+        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}<span style="font-size:10px;color:${soil.soilChemSource?'#81c784':'#546e7a'};margin-left:4px">${soil.soilChemSource?'● 실측':'⬡ 추정'}</span></span></div>
+        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}${soil.soilChemSource?'g/kg':'%'}</span></div>
+        ${soil.ap!=null?`<div class="data-row"><span class="data-key">유효인산</span><span class="data-val">${soil.ap}mg/kg</span></div>`:''}
         <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravelPct??'—'}% ${(soil.gravelPct??0)>30?'<span style="color:#ef9a9a">⚠️ 높음</span>':''}</span></div>
-        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gw}m</span></div>
+        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gwReal?soil.gwReal.level+'m EL <span style="font-size:10px;color:#81c784">● 실측</span>':soil.gw+'m <span style="font-size:10px;color:#546e7a">⬡ 추정</span>'}</span></div>
+        ${soil.gwReal?.depth!=null?`<div class="data-row"><span class="data-key">지하수 심도</span><span class="data-val">${soil.gwReal.depth}m (${soil.gwReal.wellName})</span></div>`:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지형 · 지질 ──</div>
         <div class="data-row"><span class="data-key">해발고도 / 지형</span><span class="data-val">${elev&&elev.elevation!=null?elev.elevation+'m':'—'} · ${elev&&elev.elevation<30?'평지 (하성평탄지)':elev&&elev.elevation<100?'구릉지':'산지'}</span></div>
@@ -4502,7 +4547,8 @@ const KEYS={
   ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272',
   gyeonggi:'f195170eba6849b1a7ebf5d594e20346',
   sgis:'06597bea25f14d129211',         // 통계청 SGIS consumer_key
-  sgisSecret:'e9d00ead80e84464b936'     // 통계청 SGIS consumer_secret
+  sgisSecret:'e9d00ead80e84464b936',    // 통계청 SGIS consumer_secret
+  groundwater:'ef358cd35c6fb75cf6fd9871eb4b8eb5167fe146834671c1ea7988e9dbf572'  // 국가지하수정보시스템
 };
 
 // ════════════════════════════════════════════
@@ -5497,6 +5543,85 @@ async function getRealSoilRDA(coords, address){
   }catch(e){console.warn('흙토람 V2 실패:',e.message);}
   return null;
 
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 농경지화학성 V2 — pH·유기물·유효인산 통계
+// (법정동코드 = PNU 앞 10자리)
+// ════════════════════════════════════════════
+async function getRealSoilChem(pnu){
+  if(!KEYS.soilrda||!pnu||pnu.length<10) return null;
+  const key=encodeURIComponent(KEYS.soilrda);
+  const bjdCd=pnu.slice(0,10);
+  const base=`${WORKER_URL}/soil-stat`;
+  const numOfRows=5;
+  try{
+    const xmlText=tag=>{const el=new DOMParser().parseFromString(tag,'text/xml');return el;};
+    const fetchStat=async(ep)=>{
+      const url=`${base}/${ep}?serviceKey=${key}&BJD_CD=${bjdCd}&numOfRows=${numOfRows}&pageNo=1`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+      return r.text();
+    };
+    const [phTxt,omTxt,apTxt]=await Promise.all([
+      fetchStat('getFarmExamPhInfo'),
+      fetchStat('getFarmExamOmInfo'),
+      fetchStat('getFarmExamApInfo'),
+    ]);
+
+    const parseAvg=(txt,tag)=>{
+      const xml=new DOMParser().parseFromString(txt,'text/xml');
+      const items=xml.getElementsByTagName('item');
+      if(!items.length) return null;
+      // 최신 연도 우선
+      const vals=[...items].map(it=>{
+        const v=it.getElementsByTagName(tag)[0]?.textContent||
+                it.getElementsByTagName('dataValue')[0]?.textContent||
+                it.getElementsByTagName('val')[0]?.textContent;
+        return v?parseFloat(v):NaN;
+      }).filter(v=>!isNaN(v)&&v>0);
+      if(!vals.length) return null;
+      return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
+    };
+
+    const ph=parseAvg(phTxt,'pH')||parseAvg(phTxt,'avgPH')||parseAvg(phTxt,'measValue');
+    const om=parseAvg(omTxt,'OM')||parseAvg(omTxt,'avgOM')||parseAvg(omTxt,'measValue');
+    const ap=parseAvg(apTxt,'AP')||parseAvg(apTxt,'avgAP')||parseAvg(apTxt,'measValue');
+
+    if(ph||om){
+      console.log('✅ 농경지화학성 V2 성공 — pH:',ph,'OM:',om,'AP:',ap,'BJD:',bjdCd);
+      return{ph,om,ap,bjdCd,source:'실제 (농촌진흥청 농경지화학성 통계 V2)',reliability:'real'};
+    }
+    return null;
+  }catch(e){console.warn('농경지화학성 V2 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 국가지하수정보시스템 — 최근접 관측정 지하수위
+// ════════════════════════════════════════════
+async function getRealGroundwater(coords){
+  if(!KEYS.groundwater) return null;
+  try{
+    const key=encodeURIComponent(KEYS.groundwater);
+    // 관측정 목록 조회 (좌표 반경 내)
+    const url=`${WORKER_URL}/groundwater/getGrdWtrMeasureList?serviceKey=${key}&latitude=${coords.lat}&longitude=${coords.lng}&radius=5000&numOfRows=5&pageNo=1`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    const txt=await r.text();
+    if(!txt||txt.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')||txt.includes('INVALID_REQUEST_PARAMETER_ERROR')) return null;
+    const xml=new DOMParser().parseFromString(txt,'text/xml');
+    const items=xml.getElementsByTagName('item');
+    if(!items.length) return null;
+    const g=(item,tag)=>item.getElementsByTagName(tag)[0]?.textContent?.trim()||'';
+    // 첫 번째 관측정 수위
+    const wl=parseFloat(g(items[0],'groundWaterLevel')||g(items[0],'gwLevel')||g(items[0],'wl'));
+    const depth=parseFloat(g(items[0],'waterDepth')||g(items[0],'depth'));
+    const wellName=g(items[0],'wellName')||g(items[0],'obsWellNm')||'지하수 관측정';
+    const dist=parseFloat(g(items[0],'distance')||'0');
+    if(!isNaN(wl)&&wl>0){
+      console.log('✅ 지하수위 실측:', wl,'m (EL)','관측정:',wellName);
+      return{level:wl,depth:isNaN(depth)?null:depth,wellName,dist:Math.round(dist),source:'실제 (국가지하수정보시스템)',reliability:'real'};
+    }
+    return null;
+  }catch(e){console.warn('지하수위 API 실패:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
