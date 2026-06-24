@@ -1686,61 +1686,208 @@ async function getKMAClimateSummary(c){
     const stn=findNearestStn(c.lat,c.lng);
     console.log('📡 KMA 최근접 ASOS 지점:',stn.name,'(',stn.id,') —',stn.distKm,'km');
 
-    // 최근 3년 월별 ASOS 자료 조회
-    // ※ 엔드포인트: apihub.kma.go.kr 기후통계 섹션에서 확인 후 교체 예정
-    // 현재 사용 엔드포인트: kma_sfcmm.php (ASOS 월별 통계)
+    // 직전 완전한 연도 기준 3년 범위
     const now=new Date();
-    const years=[now.getFullYear()-1,now.getFullYear()-2,now.getFullYear()-3];
+    const endYr=now.getFullYear()-1;          // 예: 2025
+    const startYr=endYr-2;                    // 예: 2023
+    const endYm=endYr*100+12;                 // 202512
+    const startYm=startYr*100+1;              // 202301
 
-    const allRows=[];
-    for(const yr of years){
-      try{
-        const url=`${WORKER_URL}/kma-hub/api/typ01/url/kma_sfcmm.php?stn=${stn.id}&ym=${yr}&authKey=${KEYS.kmaHub}`;
-        const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
-        const txt=await res.text();
-        console.log(`📡 KMA ASOS 월별(${yr}) 응답 앞 200자:`,txt.slice(0,200));
-        const rows=parseKMATextRows(txt);
-        allRows.push(...rows.filter(r=>r.length>=5)); // 유효 행만
-      }catch(ye){console.warn('KMA 월별 오류',yr,ye.message);}
+    const auth=`&help=0&disp=0&authKey=${KEYS.kmaHub}`;
+    const stnParam=`&stn_id=${stn.id}`;
+    const base=`${WORKER_URL}/kma-hub/api/typ01/url`;
+
+    // 7개 엔드포인트 병렬 조회 (실제 응답 포맷 기준, stn_id 사용 시 DST 컬럼 없음)
+    // sts_ta.php  연자료 : YEAR STN_ID LAT LON ALTD TA_YAVG(5) TMX_YAVG(6) TMN_YAVG(7) TMX(8) OCDT(9) TA_DAVG_MAX(10) OCDT(11) TMN(12) ...
+    // sts_rn.php  연자료 : YEAR STN_ID LAT LON ALTD RN_YSUM(5) ...         → 연강수량 합계
+    // sts_rn.php  월자료 : YM   STN_ID LAT LON ALTD RN_MSUM(5) ...         → 계절 패턴용
+    // sts_wind.php 월자료: YM   STN_ID LAT LON ALTD WS_MAVG(5) ... WD_FRQ(12) WS_MIX(13) WD_MIX(14)
+    // sts_ss.php  연자료 : YEAR STN_ID LAT LON ALTD SS_HR_YSUM(5) SSRATE(6)
+    // sts_te.php  연자료 : 연도 STN_ID 위도 경도 고도 TE005_YAVG(5) ... TE010_YAVG(10) ... TE020_YAVG(15) ... (한글 헤더 → index 기반)
+    // sts_td.php  연자료 : YEAR STN_ID LAT LON ALTD TD_YAVG(5) ... (이슬점온도)
+    const [taRes,rnYrRes,rnMoRes,wdRes,ssRes,teRes,tdRes]=await Promise.allSettled([
+      fetch(`${base}/sts_ta.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_rn.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_rn.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_wind.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_ss.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_te.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_td.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+    ]);
+
+    // ── 헬퍼: KMA 응답 텍스트 파싱 ──
+    // 실제 응답 포맷 특징:
+    //   ① 각 줄 끝에 = 붙음 (헤더·데이터 모두)  → trim 후 제거
+    //   ② 결측값: -99.9 또는 -999              → 유효값 필터 필요
+    //   ③ stn_id 지정 시 DST 컬럼 없음          → 필드명 기반 파싱 우선
+    // 실제 헤더 예: # YEAR STN_ID LAT LON ALTD WS_YAVG WS_INS_MAX ... WD_FRQ WS_MIX WD_MIX=
+    const parseKMA=(txt)=>{
+      const lines=txt.split('\n');
+      let headers=[];
+      const rows=[];
+      for(const line of lines){
+        // 줄 끝 = 제거 후 trim
+        const t=line.trim().replace(/=+$/, '');
+        if(!t) continue;
+        if(t.startsWith('#')){
+          // 마지막 # 줄의 대문자 식별자 토큰들이 필드명
+          const candidate=t.replace(/^#+\s*/,'').trim();
+          const parts=candidate.split(/\s+/).filter(Boolean);
+          if(parts.length>3 && /^[A-Z_\/0-9]+$/.test(parts[0])) headers=parts;
+        } else {
+          const vals=t.split(/\s+/).filter(Boolean);
+          if(vals.length>3){
+            const row={};
+            headers.forEach((h,i)=>{ if(i<vals.length) row[h]=vals[i]; });
+            rows.push(row);
+          }
+        }
+      }
+      return rows;
+    };
+    // 유효 수치 추출: -99.9·-999 결측값 → NaN 처리
+    const kmaNum=(v)=>{ const n=parseFloat(v); return(!isNaN(n)&&n>-99)?n:NaN; };
+
+    // ── 기온 연자료 처리 ──
+    // stn_id 지정 시 컬럼: YEAR STN_ID LAT LON ALTD TA_YAVG TMX OCDT_TA_MAX TA_DAVG_MAX OCDT_TA_DAVG_MAX TMN ...
+    //                       [0]   [1]   [2] [3]  [4]   [5]   [6]      [7]          [8]           [9]      [10]
+    let annualMean=null, absMin=null;
+    if(taRes.status==='fulfilled'){
+      const txt=await taRes.value.text();
+      console.log('📡 KMA 기온 연자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      // 필드명 기반 우선, 실패 시 인덱스 폴백 (DST 없으므로 col 5, 10)
+      const getCol=(r,field,idx)=>{
+        if(r[field]!==undefined) return kmaNum(r[field]);
+        return kmaNum(Object.values(r)[idx]);
+      };
+      const yearMeans=rows.map(r=>getCol(r,'TA_YAVG',5)).filter(v=>!isNaN(v));
+      const yearMins =rows.map(r=>getCol(r,'TMN',12)).filter(v=>!isNaN(v));  // TMN은 실제 col12 (OCDT 날짜 컬럼들이 중간에 있음)
+      if(yearMeans.length){
+        annualMean=+(yearMeans.reduce((a,b)=>a+b,0)/yearMeans.length).toFixed(1);
+      }
+      if(yearMins.length) absMin=+Math.min(...yearMins).toFixed(1);
     }
-    if(!allRows.length){console.warn('KMA 기후 데이터 없음 — ERA5 폴백');return null;}
+    if(annualMean===null){ console.warn('KMA 기온 데이터 없음 — ERA5 폴백'); return null; }
 
-    // 컬럼 인덱스: 응답 포맷 확인 후 조정 필요
-    // 예상: TM(년월) STN TA(평균기온) RN(강수량) WS(평균풍속) WD(주풍향) MN(최저기온)
-    const temps=[], precips=[], minTemps=[], windDirs=[], months=[];
-    for(const r of allRows){
-      const ym=r[0]; // YYYYMM
-      const mo=ym?parseInt(String(ym).slice(-2)):null;
-      if(!mo||mo<1||mo>12) continue;
-      const ta=parseFloat(r[2]); // 평균기온
-      const rn=parseFloat(r[3]); // 강수량
-      const mn=parseFloat(r[5]); // 최저기온
-      const wd=parseFloat(r[4]); // 풍향
-      if(!isNaN(ta)) temps.push(ta);
-      if(!isNaN(rn)) precips.push({mo,v:rn});
-      if(!isNaN(mn)) minTemps.push(mn);
-      if(!isNaN(wd)) months.push({mo,wd});
+    // ── 강수량 처리 ──
+    // 연자료(RN_YSUM): YEAR STN_ID LAT LON ALTD RN_YSUM(5) ... → 연강수량 직접 취득
+    // 월자료(RN_MSUM): YM   STN_ID LAT LON ALTD RN_MSUM(5) ... → 계절 패턴 (어느 달 많은지)
+    let annualPrecip=1200, precipNote='7~8월 집중';
+    // 연강수량: RN_YSUM 연자료 평균
+    if(rnYrRes.status==='fulfilled'){
+      const txt=await rnYrRes.value.text();
+      console.log('📡 KMA 강수량 연자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      const ysums=rows.map(r=>kmaNum(r.RN_YSUM!==undefined?r.RN_YSUM:Object.values(r)[5])).filter(v=>!isNaN(v)&&v>0);
+      if(ysums.length) annualPrecip=Math.round(ysums.reduce((a,b)=>a+b,0)/ysums.length);
     }
-    if(temps.length<6){console.warn('KMA 기온 데이터 부족');return null;}
+    // 계절 패턴: RN_MSUM 월자료 → 월별 평균 집계 후 가장 많은 달 2개
+    if(rnMoRes.status==='fulfilled'){
+      const txt=await rnMoRes.value.text();
+      console.log('📡 KMA 강수량 월자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      const byMonth=Array.from({length:12},()=>[]);
+      rows.forEach(r=>{
+        const ymStr=r.YM||Object.values(r)[0]||'';
+        const mo=parseInt(String(ymStr).slice(-2))-1;
+        const rn=kmaNum(r.RN_MSUM!==undefined?r.RN_MSUM:Object.values(r)[5]);
+        if(mo>=0&&mo<12&&!isNaN(rn)&&rn>=0) byMonth[mo].push(rn);
+      });
+      const monthAvg=byMonth.map(arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0);
+      if(monthAvg.some(v=>v>0)){
+        const top2=monthAvg.map((v,i)=>({v,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
+        if(top2.length>=2) precipNote=`${top2[0]}~${top2[1]}월 집중`;
+      }
+    }
 
-    const annualMean=+(temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1);
-    // 월별 평균 강수량 → 연강수량
-    const mp=Array(12).fill(null).map((_,i)=>{
-      const vs=precips.filter(x=>x.mo===i+1).map(x=>x.v);
-      return vs.length?vs.reduce((a,b)=>a+b,0)/vs.length:null;
-    });
-    const annualPrecip=Math.round(mp.filter(v=>v!=null).reduce((a,b)=>a+b,0)
-      *(12/mp.filter(v=>v!=null).length));
-    const maxPrecipMonths=mp.map((v,i)=>({v:v||0,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
-    const precipNote=`${maxPrecipMonths[0]}~${maxPrecipMonths[1]}월 집중`;
-    const absMin=minTemps.length?+Math.min(...minTemps).toFixed(1):null;
+    // ── 바람 월자료 처리 ──
+    // stn_id 지정 시 컬럼: YM STN_ID LAT LON ALTD WS_MAVG WS_INS_MAX OCDT WD_INS_MAX WS_MAX OCDT WD_MAX WD_FRQ WS_MIX WD_MIX
+    //                      [0]  [1]   [2] [3]  [4]   [5]     [6]      [7]     [8]       [9]  [10]  [11]   [12]   [13]   [14]
+    // 연자료도 동일 구조 (WS_YAVG 대신 WS_MAVG, WD_FRQ는 항상 [12])
+    let windSummary='봄 서풍 / 여름 남서풍 / 가을 북서풍 / 겨울 북서풍';
+    if(wdRes.status==='fulfilled'){
+      const txt=await wdRes.value.text();
+      console.log('📡 KMA 바람 월자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      const dirName=deg=>{const dirs=['북','북동','동','남동','남','남서','서','북서'];return dirs[Math.round((deg%360)/45)%8];};
+      // WD_FRQ(최다풍향) @ col12; 결측(-999) 시 WD_MIX(합성풍향) 사용
+      const getWdFrq=r=>{
+        const frq=kmaNum(r.WD_FRQ!==undefined?r.WD_FRQ:Object.values(r)[12]);
+        if(!isNaN(frq)) return frq;
+        return kmaNum(r.WD_MIX!==undefined?r.WD_MIX:Object.values(r)[14]);
+      };
+      const getYm=r=>r.YM||Object.values(r)[0]||'';
+      const domDir=moArr=>{
+        const degs=rows.filter(r=>{
+          const ym=String(getYm(r));
+          const mo=parseInt(ym.slice(-2));
+          return moArr.includes(mo);
+        }).map(r=>getWdFrq(r)).filter(v=>!isNaN(v));
+        if(!degs.length) return '북서';
+        const h=new Float32Array(8);
+        degs.forEach(d=>h[Math.round((d%360)/45)%8]++);
+        let b=0; for(let i=1;i<8;i++) if(h[i]>h[b]) b=i;
+        return dirName(b*45);
+      };
+      windSummary=`봄 ${domDir([3,4,5])}풍 / 여름 ${domDir([6,7,8])}풍 / 가을 ${domDir([9,10,11])}풍 / 겨울 ${domDir([12,1,2])}풍`;
+    }
 
-    // 계절별 주풍향
-    const dirName=deg=>{const dirs=['북','북동','동','남동','남','남서','서','북서'];return dirs[Math.round((deg%360)/45)%8];};
-    const domDir=(moArr,m1,m2)=>{const v=months.filter(x=>x.mo>=m1&&x.mo<=m2).map(x=>x.wd);if(!v.length)return'북서';const h=new Float32Array(8);v.forEach(d=>h[Math.round((d%360)/45)%8]++);let b=0;for(let i=1;i<8;i++)if(h[i]>h[b])b=i;return dirName(b*45);};
-    const windSummary=`봄 ${domDir(months,3,5)}풍 / 여름 ${domDir(months,6,8)}풍 / 가을 ${domDir(months,9,11)}풍 / 겨울 ${domDir(months,12,12)||domDir(months,1,2)}풍`;
+    // ── 지중온도 연자료 처리 ──
+    // 헤더 한글 혼용 → parseKMA 필드명 인식 불가 → 인덱스 직접 파싱
+    // 컬럼 패턴: 연도 STN LAT LON ALTD | TE005_YAVG(5) MAX(6) OCDT(7) MIN(8) OCDT(9) | TE010_YAVG(10)... TE020_YAVG(15)...
+    let soilTemp5=null, soilTemp10=null, soilTemp20=null;
+    if(teRes.status==='fulfilled'){
+      const txt=await teRes.value.text();
+      console.log('📡 KMA 지중온도 연자료 앞 300자:',txt.slice(0,300));
+      const v5arr=[], v10arr=[], v20arr=[];
+      txt.split('\n').forEach(line=>{
+        const t=line.trim().replace(/=+$/,'');
+        if(!t||t.startsWith('#')) return;
+        const cols=t.split(/\s+/).filter(Boolean);
+        if(cols.length<16) return;
+        const v5=kmaNum(cols[5]), v10=kmaNum(cols[10]), v20=kmaNum(cols[15]);
+        // 지중온도 현실 범위: -5~35°C
+        if(!isNaN(v5)&&v5>-5&&v5<35) v5arr.push(v5);
+        if(!isNaN(v10)&&v10>-5&&v10<35) v10arr.push(v10);
+        if(!isNaN(v20)&&v20>-5&&v20<35) v20arr.push(v20);
+      });
+      if(v5arr.length) soilTemp5=+(v5arr.reduce((a,b)=>a+b,0)/v5arr.length).toFixed(1);
+      if(v10arr.length) soilTemp10=+(v10arr.reduce((a,b)=>a+b,0)/v10arr.length).toFixed(1);
+      if(v20arr.length) soilTemp20=+(v20arr.reduce((a,b)=>a+b,0)/v20arr.length).toFixed(1);
+    }
 
-    return{annualMean,annualPrecip,absMin,precipNote,windSummary,
+    // ── 이슬점온도 연자료 처리 ──
+    // 컬럼: YEAR STN_ID LAT LON ALTD TD_YAVG(5) TD_MAX(6) OCDT(7) TD_DAVG_MAX(8) OCDT(9) TD_MIN(10) ...
+    // TD_YAVG + TA_YAVG → 상대습도 추정: RH ≈ 100 - 5×(TA-TD)
+    let dewPoint=null, relHumidity=null;
+    if(tdRes.status==='fulfilled'){
+      const txt=await tdRes.value.text();
+      console.log('📡 KMA 이슬점 연자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      const tds=rows.map(r=>kmaNum(r.TD_YAVG!==undefined?r.TD_YAVG:Object.values(r)[5])).filter(v=>!isNaN(v)&&v>-40&&v<35);
+      if(tds.length){
+        dewPoint=+(tds.reduce((a,b)=>a+b,0)/tds.length).toFixed(1);
+        if(annualMean!==null) relHumidity=Math.round(Math.min(100,Math.max(10,100-5*(annualMean-dewPoint))));
+      }
+    }
+
+    // ── 일조 연자료 처리 ──
+    // stn_id 지정 시 컬럼: YEAR STN_ID LAT LON ALTD SS_HR_YSUM(5) SSRATE(6)
+    // 일부 지점 미관측 (-99.9) → NaN 처리, 관측 지점만 ~96개
+    let annualSunshine=null, sunshineRate=null;
+    if(ssRes.status==='fulfilled'){
+      const txt=await ssRes.value.text();
+      console.log('📡 KMA 일조 연자료 앞 300자:',txt.slice(0,300));
+      const rows=parseKMA(txt);
+      const hrs=rows.map(r=>kmaNum(r.SS_HR_YSUM!==undefined?r.SS_HR_YSUM:Object.values(r)[5])).filter(v=>!isNaN(v)&&v>0);
+      const rts=rows.map(r=>kmaNum(r.SSRATE!==undefined?r.SSRATE:Object.values(r)[6])).filter(v=>!isNaN(v)&&v>0);
+      if(hrs.length) annualSunshine=Math.round(hrs.reduce((a,b)=>a+b,0)/hrs.length);
+      if(rts.length) sunshineRate=+(rts.reduce((a,b)=>a+b,0)/rts.length).toFixed(1);
+    }
+
+    return{annualMean,annualPrecip,absMin,precipNote,windSummary,annualSunshine,sunshineRate,
+      soilTemp5,soilTemp10,soilTemp20,dewPoint,relHumidity,
       stnName:stn.name,stnId:stn.id,stnDist:stn.distKm,
       source:`실제 (기상청 ASOS ${stn.name}(${stn.id}) — ${stn.distKm}km)`,reliability:'real'};
   }catch(e){console.warn('KMA 기후통계 오류:',e.message);return null;}
@@ -3249,6 +3396,9 @@ function renderResults(d){
         <div class="data-row" style="padding:5px 0"><span class="data-key">연평균 기온</span><span class="data-val">약 ${cs.annualMean}°C</span></div>
         <div class="data-row" style="padding:5px 0"><span class="data-key">연강수량</span><span class="data-val">약 ${cs.annualPrecip.toLocaleString()}mm (${cs.precipNote})</span></div>
         <div class="data-row" style="padding:5px 0"><span class="data-key">계절 주풍향</span><span class="data-val" style="text-align:right">${cs.windSummary}</span></div>
+        ${cs.annualSunshine!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">연간 일조</span><span class="data-val">${cs.annualSunshine.toLocaleString()}시간 · 일조율 ${cs.sunshineRate}%</span></div>`:''}
+        ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">연평균 지중온도</span><span class="data-val">${[cs.soilTemp5!=null?`5cm ${cs.soilTemp5}°C`:'',cs.soilTemp10!=null?`10cm ${cs.soilTemp10}°C`:'',cs.soilTemp20!=null?`20cm ${cs.soilTemp20}°C`:''].filter(Boolean).join(' / ')}</span></div>`:''}
+        ${cs.dewPoint!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">습도 환경</span><span class="data-val">이슬점 ${cs.dewPoint}°C${cs.relHumidity!=null?` · 연평균 상대습도 ~${cs.relHumidity}%`:''}</span></div>`:''}
         <div class="data-row" style="padding:5px 0;border-bottom:none"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a">약 ${cs.absMin}°C</span></div>
       </div>
     </div>`:'';
@@ -4218,7 +4368,7 @@ const KEYS={
   vworld:'525DBFC7-F789-3094-871F-CD46831310CB',
   airkorea:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  kmaHub:'',   // 기상청 API허브 (apihub.kma.go.kr) 전용 인증키 — KMA 지상관측 평년값 조회용
+  kmaHub:'YbuUmn_jToC7lJp_496ASw',   // 기상청 API허브 (apihub.kma.go.kr) 전용 인증키 — KMA 지상관측 평년값 조회용
   soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   envgrd:'YD6X-CR5X-EJDT-V2OJ',
@@ -4419,6 +4569,7 @@ function updateKeyStatus(){
   setS('status-vworld',KEYS.vworld,'✅ 키 설정됨 — 법정 용도지역 실제값 사용','⬡ 미설정 — OSM 토지이용 사용 중');
   setS('status-airkorea',KEYS.airkorea,'✅ 키 설정됨 — 에어코리아 PM2.5/PM10 실시간','⬡ 미설정 — OpenAQ 사용 중');
   setS('status-kma',KEYS.kma,'✅ 키 설정됨 — KMA 격자 기상 실측','⬡ 미설정 — Open-Meteo 사용 중');
+  setS('status-kma-hub',KEYS.kmaHub,'✅ 키 설정됨 — 기상청 ASOS 실측 평년값 사용 (ERA5 대체)','⬡ 미설정 — Open-Meteo ERA5 사용 중 (키 입력 시 기상청 실측 평년값으로 업그레이드)');
   setS('status-soilrda',KEYS.soilrda,'✅ 키 설정됨 — 흙토람 실제 토양 데이터','⬡ 미설정 — 시뮬레이션 사용 중');
   setS('status-nibr',KEYS.nibr,'✅ 키 설정됨 — 국립생물자원관 서식종 실측','⬡ 미설정 — 시뮬레이션 사용 중');
   updateHeaderApiCount();
@@ -4428,7 +4579,7 @@ function updateHeaderApiCount(){
   const el=document.getElementById('apiConnCount');
   if(!el)return;
   const freeCount=4; // OSM, OpenAQ, Open-Meteo, Open-Meteo ERA5
-  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
+  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.kmaHub,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
   const total=freeCount+paidCount;
   const max=12;
   el.textContent=`${total}/${max} 연결`;
@@ -4499,6 +4650,36 @@ async function testApi(type){
         document.getElementById('test-kma-status').innerHTML='<span style="color:#ef9a9a">❌ 키 오류</span>';
       }
     }catch(e){document.getElementById('status-kma').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-kma').className='api-status err';}
+  }
+  else if(type==='kmaHub'){
+    const key=document.getElementById('key-kma-hub').value.trim();
+    if(!key){document.getElementById('status-kma-hub').textContent='⚠️ 키를 먼저 입력하세요';return;}
+    document.getElementById('status-kma-hub').textContent='⏳ 연결 테스트 중 (기온 연자료 조회)…';document.getElementById('status-kma-hub').className='api-status idle';
+    try{
+      const now=new Date();
+      const yr=now.getFullYear()-1; // 직전 완전한 연도
+      // 서울(108) 기온 연자료 테스트
+      const url=`${WORKER_URL}/kma-hub/api/typ01/url/sts_ta.php?tm1=${yr}&tm2=${yr}&stn_id=108&help=0&disp=0&authKey=${encodeURIComponent(key)}`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(12000)});
+      const txt=await r.text();
+      console.log('🔍 KMA Hub 테스트 응답 앞 400자:',txt.slice(0,400));
+      if(txt.includes('UNAUTHORIZED')||txt.includes('401')||txt.includes('Invalid')||txt.includes('인증')){
+        document.getElementById('status-kma-hub').textContent='❌ 인증 실패 — apihub.kma.go.kr에서 기후통계 API 활용신청 + 키 확인 필요';
+        document.getElementById('status-kma-hub').className='api-status err';return;
+      }
+      // # 로 시작하지 않는 데이터 행 추출
+      const dataLines=txt.split('\n').filter(l=>l.trim()&&!l.trim().startsWith('#'));
+      if(dataLines.length===0){
+        document.getElementById('status-kma-hub').textContent=`⚠️ 응답 수신했으나 데이터 없음 — API 활용신청 확인 필요\n앞 200자: ${txt.slice(0,200)}`;
+        document.getElementById('status-kma-hub').className='api-status err';return;
+      }
+      const cols=dataLines[0].trim().split(/\s+/);
+      // col[6]=TA_YAVG (연평균기온)
+      const taAvg=cols[6]!==undefined?parseFloat(cols[6]):NaN;
+      const stnId=cols[1]||'?';
+      document.getElementById('status-kma-hub').textContent=`✅ 연결 성공 — 서울(${stnId}) ${yr}년 연평균기온: ${isNaN(taAvg)?'조회됨':taAvg+'°C'} · 기상청 ASOS 실측값 사용 가능`;
+      document.getElementById('status-kma-hub').className='api-status ok';
+    }catch(e){document.getElementById('status-kma-hub').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-kma-hub').className='api-status err';}
   }
   else if(type==='soilrda'){
     const key=document.getElementById('key-soilrda').value.trim();
