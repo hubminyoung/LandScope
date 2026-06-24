@@ -1229,18 +1229,16 @@ async function _doAnalysis(address, coords){
         values:`지하수위 ${gwReal.level}m EL / 심도 ${gwReal.depth??'—'}m`,
         status:'real',verifyUrl:'https://www.gims.go.kr/',verifyLabel:'지하수정보시스템'});
     }
+    // 토양오염도 (식품안전나라 I2390): 조사연도가 수년~십수년 전이라 표시 제외 — dataLog에만 기록
     if(soilContam){
-      soil.contamination=soilContam;
-      if(soilContam.contaminated){
-        soil.implications.push(`☢️ 토양오염 우려기준 초과 — ${soilContam.exceedances.map(e=>e.name+'('+e.value+'mg/kg)').join(', ')}`);
-      }
+      soil.contamination=soilContam; // 내부 보관 (향후 최신 API 연동 시 활용)
       dataLog.push({category:'토양오염도 (식품안전나라)',icon:'☢️',api:'식품안전나라 토양실태조사 I2390',
         url:'https://www.foodsafetykorea.go.kr/',
-        note:`${soilContam.addr} 반경 조사자료 ${soilContam.totalItems}건 (${soilContam.examYr}년 / ${soilContam.chartrCl})`,
+        note:`조사연도 ${soilContam.examYr}년 — 오래된 데이터로 표시 제외 (${soilContam.addr})`,
         values:soilContam.contaminated
-          ?`⚠️ 우려기준 초과 항목: ${soilContam.exceedances.map(e=>e.name+' '+e.ratio+'배').join(', ')}`
-          :'✅ 모든 측정 항목 우려기준 이하',
-        status:'real',verifyUrl:'https://www.foodsafetykorea.go.kr/',verifyLabel:'식품안전나라 확인'});
+          ?`⚠️ 우려기준 초과 (${soilContam.examYr}년 기준): ${soilContam.exceedances.map(e=>e.name+' '+e.ratio+'배').join(', ')}`
+          :`✅ 우려기준 이하 (${soilContam.examYr}년 기준)`,
+        status:'partial',verifyUrl:'https://www.foodsafetykorea.go.kr/',verifyLabel:'식품안전나라 확인'});
     }
 
     // ── 서식종: NIBR(전국) + 경기도 보호종/보호수(경기도 한정) 병렬 조회 ──
@@ -1779,13 +1777,13 @@ async function getKMAClimateSummary(c){
     // sts_te.php  연자료 : 연도 STN_ID 위도 경도 고도 TE005_YAVG(5) ... TE010_YAVG(10) ... TE020_YAVG(15) ... (한글 헤더 → index 기반)
     // sts_td.php  연자료 : YEAR STN_ID LAT LON ALTD TD_YAVG(5) ... (이슬점온도)
     const [taRes,rnYrRes,rnMoRes,wdRes,ssRes,teRes,tdRes]=await Promise.allSettled([
-      fetch(`${base}/sts_ta.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_rn.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_rn.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_wind.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_ss.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_te.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
-      fetch(`${base}/sts_td.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(10000)}),
+      fetch(`${base}/sts_ta.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_rn.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_rn.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_wind.php?tm1=${startYm}&tm2=${endYm}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_ss.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_te.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
+      fetch(`${base}/sts_td.php?tm1=${startYr}&tm2=${endYr}${stnParam}${auth}`,{signal:AbortSignal.timeout(20000)}),
     ]);
 
     // ── 헬퍼: KMA 응답 텍스트 파싱 ──
@@ -2005,51 +2003,56 @@ async function getKMAClimateSummary(c){
 // 기후 자동분석 (KMA Hub 우선 → Open-Meteo ERA5 폴백)
 // ════════════════════════════════════════════
 async function getClimateSummary(c){
-  // 국내(한반도): 기상청 ASOS 실측 전용 / 국외: Open-Meteo ERA5 전용
   const isKorea=c.lat>=33&&c.lat<=39&&c.lng>=124&&c.lng<=132;
-  if(isKorea){
-    if(KEYS.kmaHub){
-      const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
-      if(kmaResult) return kmaResult;
-      console.warn('KMA 기후 실패 — 국내이므로 ERA5 폴백 없음');
-    }
-    return null; // 인증키 없거나 KMA 실패 시 null 반환
+  // 한국: 기상청 ASOS 우선, 실패 시 ERA5 폴백
+  if(isKorea&&KEYS.kmaHub){
+    const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
+    if(kmaResult) return kmaResult;
+    console.warn('KMA 기후 실패 — ERA5 폴백 사용');
   }
-  // 국외 좌표: Open-Meteo ERA5
+  // Open-Meteo ERA5 과거 3년 (국외 또는 KMA 실패 시 국내 폴백)
   try{
-    // 최근 3년 일별 데이터
     const end=new Date();end.setDate(end.getDate()-2);
     const start=new Date(end);start.setFullYear(start.getFullYear()-3);
     const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}`+
       `&start_date=${fmt(start)}&end_date=${fmt(end)}`+
-      `&daily=temperature_2m_mean,temperature_2m_min,precipitation_sum,wind_direction_10m_dominant`+
+      `&daily=temperature_2m_mean,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_mean,wind_direction_10m_dominant`+
       `&timezone=Asia%2FSeoul`;
-    const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),12000);
+    const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),15000);
     const r=await fetch(url,{signal:ctrl.signal});
     const d=await r.json();
     if(!d.daily||!d.daily.temperature_2m_mean) return null;
 
-    const temps=d.daily.temperature_2m_mean.filter(v=>v!=null);
-    const mins=d.daily.temperature_2m_min.filter(v=>v!=null);
+    const temps =d.daily.temperature_2m_mean.filter(v=>v!=null);
+    const maxes =d.daily.temperature_2m_max ?d.daily.temperature_2m_max.filter(v=>v!=null):[];
+    const mins  =d.daily.temperature_2m_min.filter(v=>v!=null);
     const precips=d.daily.precipitation_sum.filter(v=>v!=null);
+    const windSpeeds=d.daily.wind_speed_10m_mean?d.daily.wind_speed_10m_mean.filter(v=>v!=null):[];
     const windDirs=d.daily.wind_direction_10m_dominant;
     const dates=d.daily.time;
 
-    // 연평균 기온
     const annualMean=+(temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1);
-    // 연강수량 (일평균 × 365)
+    // 연평균 최고·최저 (일 최고/최저의 연평균)
+    const annualMax=maxes.length?+(maxes.reduce((a,b)=>a+b,0)/maxes.length).toFixed(1):null;
+    const annualMin=mins.length?+(mins.reduce((a,b)=>a+b,0)/mins.length).toFixed(1):null;
+    const absMin=mins.length?+Math.min(...mins).toFixed(1):null;
     const dailyMeanPrecip=precips.reduce((a,b)=>a+b,0)/precips.length;
     const annualPrecip=Math.round(dailyMeanPrecip*365);
-    // 극한 최저기온
-    const absMin=+Math.min(...mins).toFixed(1);
-    // 월별 강수량 집계
+    const windSpeed=windSpeeds.length?+(windSpeeds.reduce((a,b)=>a+b,0)/windSpeeds.length).toFixed(1):null;
+
+    // 월별 강수량 집계 → 최다 2개월 찾기
     const monthlyPrecip=Array(12).fill(0).map(()=>({sum:0,cnt:0}));
     precips.forEach((v,i)=>{if(v!=null&&dates[i]){const m=parseInt(dates[i].split('-')[1])-1;monthlyPrecip[m].sum+=v;monthlyPrecip[m].cnt++;}});
     const mp=monthlyPrecip.map(x=>x.cnt>0?+(x.sum/x.cnt*30.4).toFixed(0):0);
     const maxPrecipMonths=mp.map((v,i)=>({v,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
-    const precipNote=maxPrecipMonths.length>=2?`${maxPrecipMonths[0]}~${maxPrecipMonths[1]}월 집중`:'여름 집중';
-    // 계절별 주풍향 (숫자→8방위)
+    const summerPct=mp.reduce((a,b,i)=>i>=5&&i<=7?a+b:a,0)/(mp.reduce((a,b)=>a+b,0)||1)*100;
+    const peakMo=mp.indexOf(Math.max(...mp))+1;
+    let precipNote=maxPrecipMonths.length>=2?`${maxPrecipMonths[0]}~${maxPrecipMonths[1]}월 집중`:'여름 집중';
+    if(summerPct>0) precipNote+=` · 여름 ${Math.round(summerPct)}%`;
+    precipNote+=` · ${peakMo}월 최다`;
+
+    // 계절 주풍향
     const dirName=deg=>{const dirs=['북','북동','동','남동','남','남서','서','북서'];return dirs[Math.round((deg%360)/45)%8];};
     const seasonWinds={봄:[],여름:[],가을:[],겨울:[]};
     (windDirs||[]).forEach((v,i)=>{
@@ -2063,7 +2066,11 @@ async function getClimateSummary(c){
     const domDir=arr=>{if(!arr.length)return'북서';const hist=new Float32Array(8);arr.forEach(d=>hist[Math.round((d%360)/45)%8]++);let best=0;for(let i=1;i<8;i++)if(hist[i]>hist[best])best=i;return dirName(best*45);};
     const windSummary=Object.entries(seasonWinds).map(([s,v])=>`${s} ${domDir(v)}풍`).join(' / ');
 
-    return{annualMean,annualPrecip,absMin,precipNote,windSummary,source:'실제 (Open-Meteo ERA5 과거 3년)',reliability:'real'};
+    const src=isKorea?'기상청 KMA 미연결 — Open-Meteo ERA5 과거 3년':'Open-Meteo ERA5 과거 3년';
+    return{annualMean,annualMax,annualMin,annualPrecip,absMin,precipNote,windSummary,windSpeed,
+      soilTemp5:null,soilTemp10:null,soilTemp20:null,dewPoint:null,relHumidity:null,
+      annualSunshine:null,sunshineRate:null,
+      source:`실제 (${src})`,reliability:'real'};
   }catch(e){console.warn('기후 분석 오류:',e);return null;}
 }
 
@@ -2316,6 +2323,8 @@ function buildWater(c,osm,elev,realFlood,realNoise){
   const wqGrade=hasMajorRiver?rndInt(rng,1,3):rndInt(rng,2,5);
   const wqText=['매우좋음(Ia)','좋음(Ib)','약간좋음(II)','보통(III)','약간나쁨(IV)','나쁨(V)'][wqGrade-1];
   const landslideRisk=elev&&elev.slope>15?'높음':elev&&elev.slope>8?'중간':'낮음';
+  // 연강수량 추정 (KMA 실측 시 파이프라인에서 덮어씀)
+  const annualPrecip=hasMajorRiver?rndInt(rng,1100,1400):rndInt(rng,1200,1500);
   const floodRiskIdx={높음:75,중간:45,낮음:20}[floodRisk];
   const score=Math.round(Math.max(0,Math.min(100,100-floodRiskIdx*0.4-(wqGrade-1)*10-(impRatio>70?15:0))));
   const imp=[];
@@ -2328,7 +2337,7 @@ function buildWater(c,osm,elev,realFlood,realNoise){
   if(osm)srcParts.push('OSM 수계');
   if(realNoise)srcParts.push('소음측정망 실측');
   const reliability=realFlood?'real':osm?'partial':'simulated';
-  return{wqGrade,wqText,floodRisk,floodReliability,impRatio,noise,noiseg,
+  return{wqGrade,wqText,floodRisk,floodReliability,impRatio,annualPrecip,noise,noiseg,
     landslideRisk,flood_risk_idx:floodRiskIdx,score,hasSurface:hasStream,nearStream:hasStream,
     implications:imp,
     source:srcParts.length>0?`실제 (${srcParts.join(' + ')})`:' 시뮬레이션',
@@ -3818,7 +3827,7 @@ function renderResults(d){
         ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>
+        <div class="source-row">${cs.source&&cs.source.includes('ASOS')?'● 기상청 ASOS 실측':cs.reliability==='real'?'● ERA5 실측 (KMA 폴백)':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>
         `:(()=>{
           const hzTemp={'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'};
           return `
@@ -3833,8 +3842,8 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm</span></div>
-        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px">7~8월 집중 · 여름 ~${Math.round(water.annualPrecip*0.62)}mm</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip!=null?water.annualPrecip.toLocaleString()+'mm':'—'} <span style="font-size:10px;color:#546e7a">⬡ 추정</span></span></div>
+        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px">7~8월 집중${water.annualPrecip!=null?' · 여름 ~'+Math.round(water.annualPrecip*0.62)+'mm':''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 ──</div>
         <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
@@ -3867,14 +3876,6 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${soil.slope}°</span></div>
         ${(elev&&elev.elevation<15||soil.gw<1)?`<div class="data-row"><span class="data-key">수문지질</span><span class="data-val" style="font-size:11px">충적층 — 표면 배수 불량·물 고임 가능</span></div>`:''}
         <div class="data-row"><span class="data-key">식재 적합성</span><span class="data-val">${badge(soil.suitability,soil.ok?'green':'yellow')}</span></div>
-        ${soil.contamination?`
-        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토양오염도 (${soil.contamination.examYr}년) ──</div>
-        <div class="data-row"><span class="data-key">오염 판정</span><span class="data-val">${soil.contamination.contaminated?'<span style="color:#ef9a9a;font-weight:700">⚠️ 우려기준 초과</span>':badge('기준 이하','green')}</span></div>
-        <div class="data-row"><span class="data-key">조사 유형</span><span class="data-val" style="font-size:11px">${soil.contamination.chartrCl}</span></div>
-        ${soil.contamination.contaminated?soil.contamination.exceedances.map(e=>`<div class="data-row"><span class="data-key">${e.name}</span><span class="data-val" style="color:#ef9a9a">${e.value}mg/kg <span style="font-size:10px">(기준${e.std} · ${e.ratio}배)</span></span></div>`).join(''):''}
-        <div class="data-row" style="flex-wrap:wrap;gap:3px">${Object.entries(soil.contamination.measured).slice(0,6).map(([k,v])=>`<span style="font-size:10px;color:#78909c;background:#0d1f2d;padding:2px 5px;border-radius:3px">${{CDMM:'Cd',COPPR:'Cu',AS_:'As',MRC:'Hg',PB:'Pb',CR6:'Cr6+',ZINC:'Zn',NICKEL:'Ni'}[k]||k}:${v}</span>`).join('')}</div>
-        `:''}
         ${(soil.paddyGrade||soil.uplandGrade||soil.forestGrade)?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지이용 적성 (흙토람 V3) ──</div>
@@ -5590,17 +5591,22 @@ async function getRealSoilRDA(coords, address){
 // (법정동코드 = PNU 앞 10자리)
 // ════════════════════════════════════════════
 async function getRealSoilChem(pnu){
-  if(!KEYS.soilrda||!pnu||pnu.length<10) return null;
+  if(!KEYS.soilrda||!pnu||pnu.length<10){
+    console.log('🧪 농경지화학성 스킵 — soilrda키:',(!!KEYS.soilrda),'pnu:',pnu?.length);
+    return null;
+  }
   const key=encodeURIComponent(KEYS.soilrda);
   const bjdCd=pnu.slice(0,10);
   const base=`${WORKER_URL}/soil-stat`;
   const numOfRows=5;
   try{
-    const xmlText=tag=>{const el=new DOMParser().parseFromString(tag,'text/xml');return el;};
     const fetchStat=async(ep)=>{
       const url=`${base}/${ep}?serviceKey=${key}&BJD_CD=${bjdCd}&numOfRows=${numOfRows}&pageNo=1`;
+      console.log('🧪 농경지화학성 요청:',url.replace(key,'[KEY]'));
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-      return r.text();
+      const txt=await r.text();
+      console.log('🧪 농경지화학성',ep,'응답 앞 300자:',txt.slice(0,300));
+      return txt;
     };
     const [phTxt,omTxt,apTxt]=await Promise.all([
       fetchStat('getFarmExamPhInfo'),
@@ -5608,27 +5614,33 @@ async function getRealSoilChem(pnu){
       fetchStat('getFarmExamApInfo'),
     ]);
 
-    const parseAvg=(txt,tag)=>{
+    // 모든 태그명 시도 — API 버전/레이아웃 차이 흡수
+    const parseAvg=(txt,...tags)=>{
       const xml=new DOMParser().parseFromString(txt,'text/xml');
       const items=xml.getElementsByTagName('item');
-      if(!items.length) return null;
-      // 최신 연도 우선
-      const vals=[...items].map(it=>{
-        const v=it.getElementsByTagName(tag)[0]?.textContent||
-                it.getElementsByTagName('dataValue')[0]?.textContent||
-                it.getElementsByTagName('val')[0]?.textContent;
-        return v?parseFloat(v):NaN;
+      if(!items.length){
+        // item 없을 때 다른 element 이름 시도
+        const allEls=[...xml.querySelectorAll('*')].filter(e=>e.children.length===0&&e.textContent.trim());
+        console.log('🧪 item 없음 — 전체 element:',allEls.map(e=>e.tagName+':'+e.textContent.trim()).slice(0,10).join(', '));
+        return null;
+      }
+      const vals=[...items].flatMap(it=>{
+        for(const tag of tags){
+          const el=it.getElementsByTagName(tag)[0];
+          if(el){const n=parseFloat(el.textContent);if(!isNaN(n)&&n>0)return[n];}
+        }
+        return[];
       }).filter(v=>!isNaN(v)&&v>0);
       if(!vals.length) return null;
       return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
     };
 
-    const ph=parseAvg(phTxt,'pH')||parseAvg(phTxt,'avgPH')||parseAvg(phTxt,'measValue');
-    const om=parseAvg(omTxt,'OM')||parseAvg(omTxt,'avgOM')||parseAvg(omTxt,'measValue');
-    const ap=parseAvg(apTxt,'AP')||parseAvg(apTxt,'avgAP')||parseAvg(apTxt,'measValue');
+    const ph=parseAvg(phTxt,'pH','phVal','avgPh','measPh','phAvg','dataValue');
+    const om=parseAvg(omTxt,'om','omVal','avgOm','measOm','omAvg','dataValue');
+    const ap=parseAvg(apTxt,'ap','apVal','avgAp','measAp','apAvg','availPhos','dataValue');
 
-    if(ph||om){
-      console.log('✅ 농경지화학성 V2 성공 — pH:',ph,'OM:',om,'AP:',ap,'BJD:',bjdCd);
+    console.log('🧪 농경지화학성 파싱결과 — pH:',ph,'OM:',om,'AP:',ap,'BJD:',bjdCd);
+    if(ph!=null||om!=null){
       return{ph,om,ap,bjdCd,source:'실제 (농촌진흥청 농경지화학성 통계 V2)',reliability:'real'};
     }
     return null;
@@ -5642,23 +5654,45 @@ async function getRealGroundwater(coords){
   if(!KEYS.groundwater) return null;
   try{
     const key=encodeURIComponent(KEYS.groundwater);
-    // 관측정 목록 조회 (좌표 반경 내)
-    const url=`${WORKER_URL}/groundwater/getGrdWtrMeasureList?serviceKey=${key}&latitude=${coords.lat}&longitude=${coords.lng}&radius=5000&numOfRows=5&pageNo=1`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    // 국가지하수정보시스템: 좌표 파라미터는 obslt/obslng (위도/경도)
+    const url=`${WORKER_URL}/groundwater/getGrdWtrMeasureList?serviceKey=${key}&obslt=${coords.lat}&obslng=${coords.lng}&radius=5000&numOfRows=10&pageNo=1`;
+    console.log('💧 지하수위 요청:',url.replace(key,'[KEY]'));
+    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
     const txt=await r.text();
+    console.log('💧 지하수위 응답 앞 400자:',txt.slice(0,400));
     if(!txt||txt.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')||txt.includes('INVALID_REQUEST_PARAMETER_ERROR')) return null;
     const xml=new DOMParser().parseFromString(txt,'text/xml');
     const items=xml.getElementsByTagName('item');
+    console.log('💧 지하수위 item 수:',items.length);
     if(!items.length) return null;
-    const g=(item,tag)=>item.getElementsByTagName(tag)[0]?.textContent?.trim()||'';
-    // 첫 번째 관측정 수위
-    const wl=parseFloat(g(items[0],'groundWaterLevel')||g(items[0],'gwLevel')||g(items[0],'wl'));
-    const depth=parseFloat(g(items[0],'waterDepth')||g(items[0],'depth'));
-    const wellName=g(items[0],'wellName')||g(items[0],'obsWellNm')||'지하수 관측정';
-    const dist=parseFloat(g(items[0],'distance')||'0');
-    if(!isNaN(wl)&&wl>0){
-      console.log('✅ 지하수위 실측:', wl,'m (EL)','관측정:',wellName);
-      return{level:wl,depth:isNaN(depth)?null:depth,wellName,dist:Math.round(dist),source:'실제 (국가지하수정보시스템)',reliability:'real'};
+    const g=(item,...tags)=>{
+      for(const t of tags){
+        const v=item.getElementsByTagName(t)[0]?.textContent?.trim();
+        if(v&&v!==''&&v!=='null') return v;
+      }
+      return '';
+    };
+    // 수위 태그: 여러 가능한 이름 시도
+    for(let i=0;i<Math.min(items.length,5);i++){
+      const item=items[i];
+      // EL 기준 지하수위 (해발기준)
+      const wlStr=g(item,'groundWaterElev','grndWtrElev','waterlvlAmvl','waterLvlAmvl','wlEl','gwElev','gwLevel','groundWaterLevel');
+      // 지표기준 수위 (심도)
+      const dpStr=g(item,'waterlvlBd','waterdpth','waterDepth','depth','gwDepth','groundWaterDepth');
+      const wellName=g(item,'obsWellNm','wellName','obsWlNm','mgmtWlNm')||'지하수 관측정';
+      const dist=parseFloat(g(item,'distance','dist')||'0');
+      const wl=parseFloat(wlStr);
+      const depth=parseFloat(dpStr);
+      console.log(`💧 관측정[${i}] wellName:${wellName} wl:${wlStr} depth:${dpStr} dist:${dist}`);
+      if(!isNaN(wl)){
+        console.log('✅ 지하수위 실측:', wl,'m EL','관측정:',wellName);
+        return{level:+wl.toFixed(1),depth:isNaN(depth)?null:+depth.toFixed(1),wellName,dist:Math.round(dist)||0,source:'실제 (국가지하수정보시스템)',reliability:'real'};
+      }
+    }
+    // item은 있는데 수위 태그를 못 찾은 경우 — 첫 item 전체 태그 출력
+    if(items.length>0){
+      const allTags=[...items[0].children].map(c=>c.tagName+':'+c.textContent.trim()).join(', ');
+      console.log('💧 지하수위 item[0] 전체 태그:',allTags);
     }
     return null;
   }catch(e){console.warn('지하수위 API 실패:',e.message);return null;}
