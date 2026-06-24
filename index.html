@@ -4486,8 +4486,8 @@ const KEYS={
   flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',
   ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272',
   gyeonggi:'f195170eba6849b1a7ebf5d594e20346',
-  sgis:'',
-  sgisSecret:''
+  sgis:'06597bea25f14d129211',         // 통계청 SGIS consumer_key
+  sgisSecret:'e9d00ead80e84464b936'     // 통계청 SGIS consumer_secret
 };
 
 // ════════════════════════════════════════════
@@ -4632,8 +4632,8 @@ function openSettings(){
     KEYS.kma=localStorage.getItem('ls_kma')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
     KEYS.soilrda=localStorage.getItem('ls_soilrda')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
     KEYS.nibr=localStorage.getItem('ls_nibr')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-    KEYS.sgis=localStorage.getItem('ls_sgis')||'';
-    KEYS.sgisSecret=localStorage.getItem('ls_sgis_secret')||'';
+    KEYS.sgis=localStorage.getItem('ls_sgis')||'06597bea25f14d129211';
+    KEYS.sgisSecret=localStorage.getItem('ls_sgis_secret')||'e9d00ead80e84464b936';
   }catch(e){}
   document.getElementById('key-vworld').value=KEYS.vworld;
   document.getElementById('key-airkorea').value=KEYS.airkorea;
