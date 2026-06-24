@@ -1896,12 +1896,17 @@ async function getKMAClimateSummary(c){
 // 기후 자동분석 (KMA Hub 우선 → Open-Meteo ERA5 폴백)
 // ════════════════════════════════════════════
 async function getClimateSummary(c){
-  // KMA Hub 인증키 있으면 기상청 실측 우선
-  if(KEYS.kmaHub){
-    const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
-    if(kmaResult) return kmaResult;
-    console.warn('KMA 기후 실패 — ERA5 폴백');
+  // 국내(한반도): 기상청 ASOS 실측 전용 / 국외: Open-Meteo ERA5 전용
+  const isKorea=c.lat>=33&&c.lat<=39&&c.lng>=124&&c.lng<=132;
+  if(isKorea){
+    if(KEYS.kmaHub){
+      const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
+      if(kmaResult) return kmaResult;
+      console.warn('KMA 기후 실패 — 국내이므로 ERA5 폴백 없음');
+    }
+    return null; // 인증키 없거나 KMA 실패 시 null 반환
   }
+  // 국외 좌표: Open-Meteo ERA5
   try{
     // 최근 3년 일별 데이터
     const end=new Date();end.setDate(end.getDate()-2);
@@ -3388,20 +3393,6 @@ function renderResults(d){
   const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,osm:osmD}=d;
   const sc=an.scores;
 
-  // 기후 요약 카드 HTML
-  const climateCardHtml=cs?`
-    <div class="card" style="margin-bottom:10px;border-color:#1e3a4f;">
-      <div class="card-title">🌡️ 기후 자동분석 <span style="font-size:9px;color:#546e7a;font-weight:400">${cs.source}</span></div>
-      <div style="display:flex;flex-direction:column;gap:5px;font-size:12px;">
-        <div class="data-row" style="padding:5px 0"><span class="data-key">연평균 기온</span><span class="data-val">약 ${cs.annualMean}°C</span></div>
-        <div class="data-row" style="padding:5px 0"><span class="data-key">연강수량</span><span class="data-val">약 ${cs.annualPrecip.toLocaleString()}mm (${cs.precipNote})</span></div>
-        <div class="data-row" style="padding:5px 0"><span class="data-key">계절 주풍향</span><span class="data-val" style="text-align:right">${cs.windSummary}</span></div>
-        ${cs.annualSunshine!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">연간 일조</span><span class="data-val">${cs.annualSunshine.toLocaleString()}시간 · 일조율 ${cs.sunshineRate}%</span></div>`:''}
-        ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">연평균 지중온도</span><span class="data-val">${[cs.soilTemp5!=null?`5cm ${cs.soilTemp5}°C`:'',cs.soilTemp10!=null?`10cm ${cs.soilTemp10}°C`:'',cs.soilTemp20!=null?`20cm ${cs.soilTemp20}°C`:''].filter(Boolean).join(' / ')}</span></div>`:''}
-        ${cs.dewPoint!=null?`<div class="data-row" style="padding:5px 0"><span class="data-key">습도 환경</span><span class="data-val">이슬점 ${cs.dewPoint}°C${cs.relHumidity!=null?` · 연평균 상대습도 ~${cs.relHumidity}%`:''}</span></div>`:''}
-        <div class="data-row" style="padding:5px 0;border-bottom:none"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a">약 ${cs.absMin}°C</span></div>
-      </div>
-    </div>`:'';
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
     <div class="score-item">
@@ -3446,7 +3437,6 @@ function renderResults(d){
   </div>`;
 
   const html=`
-    ${climateCardHtml}
     <!-- 🗺️ 입지 타입 판정 카드 -->
     <div class="stype-card">
       <div class="stype-title">🗺️ 입지 타입 판정 <span style="font-size:10px;color:#546e7a;font-weight:400">— 규제→물리→생태→위험→도시맥락 종합</span></div>
@@ -3567,7 +3557,7 @@ function renderResults(d){
         <a class="perf-source-link" href="${ind.sourceUrl}" target="_blank">📋 ${ind.source}</a>
       </div>`).join('')}
     </div>
-    <div class="card">
+    <div class="card" id="tab-card">
       <div class="tab-bar">
         <button class="tab-btn active" onclick="tab('anomaly',this)">🔍 특이점</button>
         <button class="tab-btn" onclick="tab('eco',this)">🌿 생태</button>
@@ -3625,29 +3615,41 @@ function renderResults(d){
       </div>
 
       <div class="tab-content" id="tab-climate">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 연간 기후 ──</div>
-        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?({'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'}[hz.zone]||'—'):'—')}</span></div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm <span style="font-size:10px;color:#78909c">(7~8월 집중 ~${Math.round(water.annualPrecip*0.62)}mm)</span></span></div>
-        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#80deea;font-weight:600">${hz?hz.minTemp:'—'}</span></div>
+        ${cs?`
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
+        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${cs.annualMean}°C</span></div>
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:600">${cs.absMin}°C</span></div>
         <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
-        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 현재 기상 ──</div>
-        <div class="data-row"><span class="data-key">현재 기온</span><span class="data-val">${wx.temperature}°C (체감 ${wx.feels_like}°C)</span></div>
-        <div class="data-row"><span class="data-key">7일 최고/최저</span><span class="data-val">${wx.temp_max}°C / ${wx.temp_min}°C</span></div>
-        <div class="data-row"><span class="data-key">풍속/풍향</span><span class="data-val">${wx.wind_speed}m/s · ${wx.wind_direction_text}</span></div>
-        <div class="data-row"><span class="data-key">습도</span><span class="data-val">${wx.humidity}%</span></div>
-        <div class="data-row"><span class="data-key">평균 일조</span><span class="data-val">${wx.avg_sun}h/day</span></div>
-        <div class="source-row">${wx.reliability==='high'?'● 실시간':'⬡ 시뮬레이션'} · ${wx.source}</div>
-        ${aw?`
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
+        ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
+        <div class="data-row"><span class="data-key">연평균 지중온도</span><span class="data-val">${[cs.soilTemp5!=null?`5cm ${cs.soilTemp5}°C`:'',cs.soilTemp10!=null?`10cm ${cs.soilTemp10}°C`:'',cs.soilTemp20!=null?`20cm ${cs.soilTemp20}°C`:''].filter(Boolean).join(' / ')}</span></div>
+        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">지중온도 데이터 없음</div>'}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 농업기상 관측지점 (농촌진흥청 AWS) ──</div>
-        <div class="data-row"><span class="data-key">기상지대</span><span class="data-val" style="color:#4fc3f7;font-weight:600">${aw.climateName}</span></div>
-        <div class="data-row"><span class="data-key">최인접 관측소</span><span class="data-val">${aw.name}</span></div>
-        <div class="data-row"><span class="data-key">관측소까지</span><span class="data-val">${aw.dist.toLocaleString()}m</span></div>
-        <div class="data-row"><span class="data-key">관측소 고도</span><span class="data-val">${aw.altitude}m</span></div>
-        <div class="source-row">● 실제 데이터 · ${aw.source}</div>
-        `:`<hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0"><div class="source-row">⬡ 농업기상 관측지점 — data.go.kr 서비스키 연동 필요</div>`}
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs.annualPrecip.toLocaleString()}mm <span style="font-size:10px;color:#78909c">(${cs.precipNote})</span></span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 이슬점 · 습도 ──</div>
+        ${cs.dewPoint!=null?`
+        <div class="data-row"><span class="data-key">연평균 이슬점</span><span class="data-val">${cs.dewPoint}°C</span></div>
+        ${cs.relHumidity!=null?`<div class="data-row"><span class="data-key">연평균 상대습도</span><span class="data-val">~${cs.relHumidity}%</span></div>`:''}
+        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">이슬점 데이터 없음</div>'}
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 · 풍속 ──</div>
+        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.6;text-align:right">${cs.windSummary}</span></div>
+        ${cs.annualSunshine!=null?`
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 일조 ──</div>
+        <div class="data-row"><span class="data-key">연간 일조시간</span><span class="data-val">${cs.annualSunshine.toLocaleString()}시간</span></div>
+        ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%</span></div>`:''}
+        `:''}
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source}</div>
+        `:`
+        <div style="color:#546e7a;font-size:11px;padding:8px 0">기후 데이터를 불러오는 중이거나 해당 지점 데이터가 없습니다.</div>
+        <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm</span></div>
+        `}
       </div>
 
       <div class="tab-content" id="tab-soil">
@@ -3781,6 +3783,8 @@ function renderResults(d){
 
   const rc=document.getElementById('resultContent');
   rc.innerHTML=html; rc.style.display='block';
+  // 탭 카드를 결과 최상단으로 이동
+  const _tc=document.getElementById('tab-card'); if(_tc) rc.prepend(_tc);
   requestAnimationFrame(()=>{
     drawRadar(sc);
     document.querySelectorAll('.score-bar[data-w]').forEach(b=>{setTimeout(()=>{b.style.width=b.dataset.w+'%';},50);});
