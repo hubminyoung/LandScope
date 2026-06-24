@@ -1782,7 +1782,16 @@ async function getKMAClimateSummary(c){
       if(yearMinAvgs.length) annualMin =+(yearMinAvgs.reduce((a,b)=>a+b,0)/yearMinAvgs.length).toFixed(1);
       if(yearMins.length)    absMin    =+Math.min(...yearMins).toFixed(1);
     }
-    if(annualMean===null){ console.warn('KMA 기온 데이터 없음 — ERA5 폴백'); return null; }
+    if(annualMean===null){
+      if(taRes.status==='fulfilled'){
+        const dbgTxt=await taRes.value.clone().text().catch(()=>'(read error)');
+        console.warn('KMA 기온 파싱 실패 — 응답 앞 500자:', dbgTxt.slice(0,500));
+      } else {
+        console.warn('KMA 기온 fetch 실패:', taRes.reason);
+      }
+      console.warn('KMA 기온 데이터 없음 — cs=null 폴백');
+      return null;
+    }
 
     // ── 강수량 처리 ──
     // 연자료(RN_YSUM): YEAR STN_ID LAT LON ALTD RN_YSUM(5) ... → 연강수량 직접 취득
@@ -3706,7 +3715,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?`${nih.zone}구역 <span style="font-size:10px;color:#78909c;font-weight:400">(${nih.tempRange||''})</span>`:`Zone ${hz?hz.zone:'—'} <span style="font-size:9px;color:#546e7a">(NIHHS API 연결 필요)</span>`}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
@@ -3741,11 +3750,13 @@ function renderResults(d){
           return `
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
         <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?(hzTemp[hz.zone]||'—'):'—')}</span></div>
+        <div class="data-row"><span class="data-key">연평균 최고기온</span><span class="data-val" style="color:#ef9a9a"><span style="color:#455a64;font-size:10px">—</span></span></div>
+        <div class="data-row"><span class="data-key">연평균 최저기온</span><span class="data-val" style="color:#80deea"><span style="color:#455a64;font-size:10px">—</span></span></div>
         <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${hz?hz.minTemp:'—'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?`${nih.zone}구역 <span style="font-size:10px;color:#78909c;font-weight:400">(${nih.tempRange||''})</span>`:`Zone ${hz?hz.zone:'—'} <span style="font-size:9px;color:#546e7a">(NIHHS API 연결 필요)</span>`}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm</span></div>
@@ -3753,8 +3764,13 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 ──</div>
         <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
+        <div class="data-row"><span class="data-key">연평균 풍속</span><span class="data-val"><span style="color:#455a64;font-size:10px">—</span></span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div class="source-row" style="color:#546e7a">⬡ 기상청 ASOS 연결 대기 · 지중온도·이슬점·풍속·일조는 KMA 실측 연결 후 표시</div>`;
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 이슬점 · 습도 ──</div>
+        <div class="data-row"><span class="data-key">연평균 이슬점</span><span class="data-val"><span style="color:#455a64;font-size:10px">—</span></span></div>
+        <div class="data-row"><span class="data-key">연평균 상대습도</span><span class="data-val"><span style="color:#455a64;font-size:10px">—</span></span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div class="source-row" style="color:#546e7a">⬡ 기상청 ASOS 연결 대기 · — 표시 항목은 KMA 실측 연결 후 표시</div>`;
         })()}
       </div>
 
