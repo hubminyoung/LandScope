@@ -1289,9 +1289,20 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://www.rda.go.kr/',verifyLabel:'농촌진흥청 바로가기'});
     }
 
-    // 기후 자동분석 (ERA5 — 비동기, 실패 무시)
-    const climateSummary=await getClimateSummary(coords).catch(()=>null);
-    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary};
+    // 기후 자동분석 + 농진청 내한성 — 병렬 조회
+    const [csResult,nihResult]=await Promise.allSettled([
+      getClimateSummary(coords),
+      getNIHHSHardiness(address)
+    ]);
+    const climateSummary=csResult.status==='fulfilled'?csResult.value:null;
+    let nihHardiness=nihResult.status==='fulfilled'?nihResult.value:null;
+    // absMin 있으면 시도 내 정확 구역 재매칭
+    if(nihHardiness&&climateSummary?.absMin){
+      const abs=climateSummary.absMin;
+      const re=getNIHHSHardiness(address,abs);
+      nihHardiness=await re.catch(()=>nihHardiness)||nihHardiness;
+    }
+    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
     if(heatLayer){map.removeLayer(heatLayer);heatLayer=null;}
     if(document.getElementById('l-heat')&&document.getElementById('l-heat').checked){
@@ -1751,22 +1762,25 @@ async function getKMAClimateSummary(c){
     // ── 기온 연자료 처리 ──
     // stn_id 지정 시 컬럼: YEAR STN_ID LAT LON ALTD TA_YAVG TMX OCDT_TA_MAX TA_DAVG_MAX OCDT_TA_DAVG_MAX TMN ...
     //                       [0]   [1]   [2] [3]  [4]   [5]   [6]      [7]          [8]           [9]      [10]
-    let annualMean=null, absMin=null;
+    let annualMean=null, annualMax=null, annualMin=null, absMin=null;
     if(taRes.status==='fulfilled'){
       const txt=await taRes.value.text();
       console.log('📡 KMA 기온 연자료 앞 300자:',txt.slice(0,300));
       const rows=parseKMA(txt);
-      // 필드명 기반 우선, 실패 시 인덱스 폴백 (DST 없으므로 col 5, 10)
+      // 필드명 기반 우선, 실패 시 인덱스 폴백 (DST 없으므로 col5~12)
+      // 실제 컬럼: YEAR(0) STN(1) LAT(2) LON(3) ALTD(4) TA_YAVG(5) TMX_YAVG(6) TMN_YAVG(7) TMX(8) OCDT(9) TA_DAVG_MAX(10) OCDT(11) TMN(12)
       const getCol=(r,field,idx)=>{
         if(r[field]!==undefined) return kmaNum(r[field]);
         return kmaNum(Object.values(r)[idx]);
       };
-      const yearMeans=rows.map(r=>getCol(r,'TA_YAVG',5)).filter(v=>!isNaN(v));
-      const yearMins =rows.map(r=>getCol(r,'TMN',12)).filter(v=>!isNaN(v));  // TMN은 실제 col12 (OCDT 날짜 컬럼들이 중간에 있음)
-      if(yearMeans.length){
-        annualMean=+(yearMeans.reduce((a,b)=>a+b,0)/yearMeans.length).toFixed(1);
-      }
-      if(yearMins.length) absMin=+Math.min(...yearMins).toFixed(1);
+      const yearMeans  =rows.map(r=>getCol(r,'TA_YAVG',5)).filter(v=>!isNaN(v));
+      const yearMaxAvgs=rows.map(r=>getCol(r,'TMX_YAVG',6)).filter(v=>!isNaN(v));  // 연평균 최고기온
+      const yearMinAvgs=rows.map(r=>getCol(r,'TMN_YAVG',7)).filter(v=>!isNaN(v));  // 연평균 최저기온
+      const yearMins   =rows.map(r=>getCol(r,'TMN',12)).filter(v=>!isNaN(v));       // 극한 최저기온 (TMN은 col12)
+      if(yearMeans.length)   annualMean=+(yearMeans.reduce((a,b)=>a+b,0)/yearMeans.length).toFixed(1);
+      if(yearMaxAvgs.length) annualMax =+(yearMaxAvgs.reduce((a,b)=>a+b,0)/yearMaxAvgs.length).toFixed(1);
+      if(yearMinAvgs.length) annualMin =+(yearMinAvgs.reduce((a,b)=>a+b,0)/yearMinAvgs.length).toFixed(1);
+      if(yearMins.length)    absMin    =+Math.min(...yearMins).toFixed(1);
     }
     if(annualMean===null){ console.warn('KMA 기온 데이터 없음 — ERA5 폴백'); return null; }
 
@@ -1797,7 +1811,15 @@ async function getKMAClimateSummary(c){
       const monthAvg=byMonth.map(arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0);
       if(monthAvg.some(v=>v>0)){
         const top2=monthAvg.map((v,i)=>({v,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
-        if(top2.length>=2) precipNote=`${top2[0]}~${top2[1]}월 집중`;
+        const total=monthAvg.reduce((a,b)=>a+b,0);
+        const summerSum=monthAvg[5]+monthAvg[6]+monthAvg[7]; // 6·7·8월
+        const summerPct=total>0?Math.round(summerSum/total*100):null;
+        const peakMo=monthAvg.indexOf(Math.max(...monthAvg))+1;
+        if(top2.length>=2){
+          precipNote=`${top2[0]}~${top2[1]}월 집중`;
+          if(summerPct!==null) precipNote+=` · 여름 ${summerPct}%`;
+          precipNote+=` · ${peakMo}월 최다`;
+        }
       }
     }
 
@@ -1805,7 +1827,7 @@ async function getKMAClimateSummary(c){
     // stn_id 지정 시 컬럼: YM STN_ID LAT LON ALTD WS_MAVG WS_INS_MAX OCDT WD_INS_MAX WS_MAX OCDT WD_MAX WD_FRQ WS_MIX WD_MIX
     //                      [0]  [1]   [2] [3]  [4]   [5]     [6]      [7]     [8]       [9]  [10]  [11]   [12]   [13]   [14]
     // 연자료도 동일 구조 (WS_YAVG 대신 WS_MAVG, WD_FRQ는 항상 [12])
-    let windSummary='봄 서풍 / 여름 남서풍 / 가을 북서풍 / 겨울 북서풍';
+    let windSummary='봄 서풍 / 여름 남서풍 / 가을 북서풍 / 겨울 북서풍', windSpeed=null;
     if(wdRes.status==='fulfilled'){
       const txt=await wdRes.value.text();
       console.log('📡 KMA 바람 월자료 앞 300자:',txt.slice(0,300));
@@ -1831,6 +1853,9 @@ async function getKMAClimateSummary(c){
         return dirName(b*45);
       };
       windSummary=`봄 ${domDir([3,4,5])}풍 / 여름 ${domDir([6,7,8])}풍 / 가을 ${domDir([9,10,11])}풍 / 겨울 ${domDir([12,1,2])}풍`;
+      // 연평균 풍속 (WS_MAVG col5)
+      const wsAll=rows.map(r=>kmaNum(r.WS_MAVG!==undefined?r.WS_MAVG:Object.values(r)[5])).filter(v=>!isNaN(v)&&v>0&&v<50);
+      if(wsAll.length) windSpeed=+(wsAll.reduce((a,b)=>a+b,0)/wsAll.length).toFixed(1);
     }
 
     // ── 지중온도 연자료 처리 ──
@@ -1886,7 +1911,8 @@ async function getKMAClimateSummary(c){
       if(rts.length) sunshineRate=+(rts.reduce((a,b)=>a+b,0)/rts.length).toFixed(1);
     }
 
-    return{annualMean,annualPrecip,absMin,precipNote,windSummary,annualSunshine,sunshineRate,
+    return{annualMean,annualMax,annualMin,annualPrecip,absMin,precipNote,
+      windSummary,windSpeed,annualSunshine,sunshineRate,
       soilTemp5,soilTemp10,soilTemp20,dewPoint,relHumidity,
       stnName:stn.name,stnId:stn.id,stnDist:stn.distKm,
       source:`실제 (기상청 ASOS ${stn.name}(${stn.id}) — ${stn.distKm}km)`,reliability:'real'};
@@ -2034,6 +2060,62 @@ function calcHardinessZone(lat){
   if(lat>=34.5)return{zone:'8a',minTemp:'-12~-9°C',note:'남해안 기준, 상록활엽수 일부 가능'};
   return{zone:'8b',minTemp:'-9~-7°C',note:'제주 기준, 아열대 수종 식재 가능'};
 }
+// 시도명 추출 (주소 문자열에서)
+function extractSido(address){
+  const MAP=[
+    ['서울','서울특별시'],['부산','부산광역시'],['대구','대구광역시'],['인천','인천광역시'],
+    ['광주','광주광역시'],['대전','대전광역시'],['울산','울산광역시'],['세종','세종특별자치시'],
+    ['경기','경기도'],['강원','강원특별자치도'],['충청북도','충청북도'],['충북','충청북도'],
+    ['충청남도','충청남도'],['충남','충청남도'],['전북특별자치도','전북특별자치도'],
+    ['전라북도','전북특별자치도'],['전북','전북특별자치도'],['전라남도','전라남도'],
+    ['전남','전라남도'],['경상북도','경상북도'],['경북','경상북도'],['경상남도','경상남도'],
+    ['경남','경상남도'],['제주','제주특별자치도']
+  ];
+  for(const [k,v] of MAP){ if(address.includes(k)) return v; }
+  return null;
+}
+
+// 농촌진흥청 국립원예특작과학원 식물내한성 지도 조회
+// Worker 라우트: /nihhs → https://apis.data.go.kr/1390804/Nihhs_Fruit_Area3/
+async function getNIHHSHardiness(address, absMinHint=null){
+  try{
+    const sido=extractSido(address);
+    if(!sido) return null;
+    const keyRaw=KEYS.kma||KEYS.soilrda||'';
+    if(!keyRaw) return null;
+    const key=encodeURIComponent(keyRaw);
+    const url=`${WORKER_URL}/nihhs/hardyMap?serviceKey=${key}&시도명=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    const text=await r.text();
+    if(!text||!text.includes('<item>')) return null;
+    const xml=new DOMParser().parseFromString(text,'text/xml');
+    const items=Array.from(xml.querySelectorAll('item'));
+    if(!items.length) return null;
+    // 여러 태그명 시도 (API 버전에 따라 다를 수 있음)
+    const get=(item,...tags)=>{for(const t of tags){const el=item.querySelector(t);if(el?.textContent?.trim())return el.textContent.trim();}return '';};
+    const zones=items.map(item=>({
+      grade:get(item,'hardyGrade','내한성등급','hrdnsGrd','hardnessGrade'),
+      tempRange:get(item,'tmpRange','온도범위','tempRange','tmpRngNm'),
+      areaPct:parseFloat(get(item,'areaPcnt','면적비율','areaPct','areaPcntNm')||'0')
+    })).filter(z=>z.grade);
+    if(!zones.length) return null;
+    // absMin 있으면 온도 범위로 정확 매칭, 없으면 면적 최다 구역
+    let matched=null;
+    if(absMinHint!==null){
+      matched=zones.find(z=>{
+        const nums=(z.tempRange||'').match(/-?\d+\.?\d*/g);
+        if(!nums||nums.length<2) return false;
+        const lo=Math.min(parseFloat(nums[0]),parseFloat(nums[1]));
+        const hi=Math.max(parseFloat(nums[0]),parseFloat(nums[1]));
+        return absMinHint>=lo&&absMinHint<hi;
+      });
+    }
+    if(!matched) matched=[...zones].sort((a,b)=>b.areaPct-a.areaPct)[0];
+    console.log('✅ NIHHS 내한성:',matched.grade,matched.tempRange,'(시도:',sido+')');
+    return{zone:matched.grade,tempRange:matched.tempRange,areaPct:matched.areaPct,sido,source:'농촌진흥청 국립원예특작과학원'};
+  }catch(e){console.warn('NIHHS 내한성 오류:',e.message);return null;}
+}
+
 // 국토환경성 등급 추정 (비오톱·생태자연도 기반 시뮬레이션)
 function estimateEnvGrade(eco, lsc){
   const bt=lsc.btGrade||3;
@@ -3390,7 +3472,7 @@ function updateMap(d){
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
 function renderResults(d){
-  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,osm:osmD}=d;
+  const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,nihHardiness:nih,osm:osmD}=d;
   const sc=an.scores;
 
 
@@ -3618,25 +3700,34 @@ function renderResults(d){
         ${cs?`
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
         <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${cs.annualMean}°C</span></div>
-        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:600">${cs.absMin}°C</span></div>
-        <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
+        ${cs.annualMax!=null?`<div class="data-row"><span class="data-key">연평균 최고기온</span><span class="data-val" style="color:#ef9a9a">${cs.annualMax}°C</span></div>`:''}
+        ${cs.annualMin!=null?`<div class="data-row"><span class="data-key">연평균 최저기온</span><span class="data-val" style="color:#80deea">${cs.annualMin}°C</span></div>`:''}
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${cs.absMin!=null?cs.absMin+'°C':'—'}</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
+        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?`${nih.zone}구역 <span style="font-size:10px;color:#78909c;font-weight:400">(${nih.tempRange||''})</span>`:`Zone ${hz?hz.zone:'—'} <span style="font-size:9px;color:#546e7a">(NIHHS API 연결 필요)</span>`}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
-        <div class="data-row"><span class="data-key">연평균 지중온도</span><span class="data-val">${[cs.soilTemp5!=null?`5cm ${cs.soilTemp5}°C`:'',cs.soilTemp10!=null?`10cm ${cs.soilTemp10}°C`:'',cs.soilTemp20!=null?`20cm ${cs.soilTemp20}°C`:''].filter(Boolean).join(' / ')}</span></div>
-        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">지중온도 데이터 없음</div>'}
+        <div class="data-row"><span class="data-key">5cm</span><span class="data-val">${cs.soilTemp5!=null?cs.soilTemp5+'°C':'—'}</span></div>
+        <div class="data-row"><span class="data-key">10cm</span><span class="data-val">${cs.soilTemp10!=null?cs.soilTemp10+'°C':'—'}</span></div>
+        <div class="data-row"><span class="data-key">20cm</span><span class="data-val">${cs.soilTemp20!=null?cs.soilTemp20+'°C':'—'}</span></div>
+        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">지중온도 관측 없음 (지점 미관측)</div>'}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs.annualPrecip.toLocaleString()}mm <span style="font-size:10px;color:#78909c">(${cs.precipNote})</span></span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs.annualPrecip.toLocaleString()}mm</span></div>
+        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px;text-align:right">${cs.precipNote}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 이슬점 · 습도 ──</div>
         ${cs.dewPoint!=null?`
         <div class="data-row"><span class="data-key">연평균 이슬점</span><span class="data-val">${cs.dewPoint}°C</span></div>
         ${cs.relHumidity!=null?`<div class="data-row"><span class="data-key">연평균 상대습도</span><span class="data-val">~${cs.relHumidity}%</span></div>`:''}
-        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">이슬점 데이터 없음</div>'}
+        `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">이슬점 관측 없음</div>'}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 · 풍속 ──</div>
         <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.6;text-align:right">${cs.windSummary}</span></div>
+        ${cs.windSpeed!=null?`<div class="data-row"><span class="data-key">연평균 풍속</span><span class="data-val">${cs.windSpeed}m/s</span></div>`:''}
         ${cs.annualSunshine!=null?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 일조 ──</div>
@@ -3644,21 +3735,28 @@ function renderResults(d){
         ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source}</div>
-        `:`
+        <div class="source-row">${cs.reliability==='real'?'● 기상청 ASOS 실측':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>`;
+        })()}
+        `:(()=>{
+          const hzTemp={'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'};
+          return `
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
-        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?({'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'}[hz.zone]||'—'):'—')}</span></div>
-        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:600">${hz?hz.minTemp:'—'}</span></div>
-        <div class="data-row"><span class="data-key">내한성 구역</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'}</span></div>
+        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?(hzTemp[hz.zone]||'—'):'—')}</span></div>
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${hz?hz.minTemp:'—'}</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
+        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?`${nih.zone}구역 <span style="font-size:10px;color:#78909c;font-weight:400">(${nih.tempRange||''})</span>`:`Zone ${hz?hz.zone:'—'} <span style="font-size:9px;color:#546e7a">(NIHHS API 연결 필요)</span>`}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm <span style="font-size:10px;color:#78909c">(7~8월 집중 ~${Math.round(water.annualPrecip*0.62)}mm)</span></span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm</span></div>
+        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px">7~8월 집중 · 여름 ~${Math.round(water.annualPrecip*0.62)}mm</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 ──</div>
         <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div class="source-row" style="color:#546e7a">⬡ 기상청 ASOS 실측 로딩 중 · 지중온도·이슬점·일조는 KMA 연결 후 표시</div>
-        `}
+        <div class="source-row" style="color:#546e7a">⬡ 기상청 ASOS 연결 대기 · 지중온도·이슬점·풍속·일조는 KMA 실측 연결 후 표시</div>`;
+        })()}
       </div>
 
       <div class="tab-content" id="tab-soil">
