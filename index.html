@@ -167,12 +167,14 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1923;color:#e0e6ed;heig
 .perf-ind-good{background:#0d1b26;border-left-color:#388e3c;}
 .perf-ind-caution{background:#0d1b26;border-left-color:#f57f17;}
 .perf-ind-poor{background:#0d1b26;border-left-color:#c62828;}
+.perf-ind-unknown{background:#0d1b26;border-left-color:#546e7a;}
 .perf-ind-header{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
 .perf-ind-icon{font-size:15px;flex-shrink:0;}
 .perf-ind-label{font-size:12px;font-weight:700;color:#e0e6ed;flex:1;}
 .perf-badge-good{font-size:9px;font-weight:700;background:#1e3a1e;color:#a5d6a7;padding:2px 7px;border-radius:8px;white-space:nowrap;}
 .perf-badge-caution{font-size:9px;font-weight:700;background:#2a2a1a;color:#fff176;padding:2px 7px;border-radius:8px;white-space:nowrap;}
 .perf-badge-poor{font-size:9px;font-weight:700;background:#2a1a1a;color:#ef9a9a;padding:2px 7px;border-radius:8px;white-space:nowrap;}
+.perf-badge-unknown{font-size:9px;font-weight:700;background:#1a2332;color:#78909c;padding:2px 7px;border-radius:8px;white-space:nowrap;}
 .perf-ind-current{font-size:11px;color:#81d4fa;margin-bottom:2px;font-weight:600;}
 .perf-ind-standard{font-size:10px;color:#546e7a;margin-bottom:2px;line-height:1.4;}
 .perf-ind-judgment{font-size:10px;font-weight:700;margin-bottom:3px;}
@@ -1142,7 +1144,14 @@ async function _doAnalysis(address, coords){
     const realAir=await getRealAir(coords);
     if(realAir){
       air={...air,pm25:realAir.pm25,pm10:realAir.pm10,pm25g:realAir.pm25g,station:realAir.station,source:realAir.source,reliability:realAir.reliability};
+    } else {
+      // 실측 대기질 없음 → 추정값 표시 안 함
+      air.pm25=null; air.pm10=null; air.pm25g=null; air.reliability='none';
     }
+    // 소음: 실측(환경부 소음측정망)이 있을 때만 표시 — 없으면 null
+    air.noiseReal = realNoise ? realNoise.noise : null;
+    air.noiseRealg = realNoise ? realNoise.noiseg : null;
+    air.noiseStation = realNoise ? realNoise.station : null;
 
     // ── 에어코리아 로그 ──
     if(realAir&&realAir.reliability==='real'){
@@ -1583,18 +1592,34 @@ async function getOSMData(c, radius) {
 out body;
 >;
 out skel qt;`;
-  try {
-    const res = await fetch('https://overpass-api.de/api/interpreter', {
-      method:'POST',
-      body:query,
-      headers:{'Content-Type':'text/plain'}
-    });
-    if(!res.ok) throw new Error('Overpass API error '+res.status);
-    return await res.json();
-  } catch(e) {
-    console.warn('OSM API error:', e);
-    return {elements: []};
+  // Overpass 미러 목록 (504·502 일시 오류 시 순차 시도)
+  const OVERPASS_MIRRORS=[
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.openstreetmap.ru/api/interpreter'
+  ];
+  for(let mi=0;mi<OVERPASS_MIRRORS.length;mi++){
+    try{
+      const res=await fetchWithRetry(OVERPASS_MIRRORS[mi],{
+        method:'POST', body:query, headers:{'Content-Type':'text/plain'},
+        signal:AbortSignal.timeout(35000)
+      },1,1500);
+      if(!res.ok){
+        console.warn(`Overpass ${OVERPASS_MIRRORS[mi]} — HTTP ${res.status}`);
+        continue;
+      }
+      const txt=await res.text();
+      if(txt.trim().startsWith('<')){
+        console.warn('Overpass HTML 응답(JSON 아님) — 다음 미러 시도');
+        continue;
+      }
+      return JSON.parse(txt);
+    }catch(e){
+      console.warn(`Overpass 미러 ${mi+1} 실패:`,e.message);
+    }
   }
+  console.warn('모든 Overpass 미러 실패 — OSM 데이터 없음');
+  return {elements:[]};
 }
 
 function processOSMData(osmData, c) {
@@ -2562,7 +2587,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     ecology:Math.max(0,Math.min(100,(5-eco.grade)*20+(eco.hasWetland?15:0))),
     climate:Math.min(100,70+(wx.wind_speed>=2&&wx.wind_speed<=6?15:0)+(wx.avg_sun>6?5:0)),
     soil:soil.ok?85:45,
-    air:Math.max(0,Math.min(100,100-(eco.grade-1)*15-(air.pm25>35?20:0)-(air.noise>65?15:0))),
+    air:Math.max(0,Math.min(100,100-(eco.grade-1)*15-((air.pm25??0)>35?20:0)-((air.noiseReal??air.noise??0)>65?15:0))),
     urban:Math.min(100,Math.max(0,60+(urb.greenPlan?15:0)-urb.restr.length*12)),
     traffic:trf.acc,
     social:50, // 인구/리뷰 미연동 시 중립값
@@ -2594,8 +2619,8 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     air:[
       {factor:'기본 점수',value:'기준',rule:'100점 기본',pts:100},
       {factor:'생태등급 페널티',value:`${eco.grade}등급`,rule:`-(${eco.grade}-1)×15 = -${(eco.grade-1)*15}점`,pts:-(eco.grade-1)*15},
-      {factor:'PM2.5 페널티',value:`${air.pm25}㎍/㎥`,rule:'>35이면 -20점',pts:air.pm25>35?-20:0},
-      {factor:'소음 페널티',value:`${air.noise}dB`,rule:'>65dB이면 -15점',pts:air.noise>65?-15:0},
+      {factor:'PM2.5 페널티',value:air.pm25!=null?`${air.pm25}㎍/㎥`:'미연동',rule:'>35이면 -20점',pts:(air.pm25??0)>35?-20:0},
+      {factor:'소음 페널티',value:air.noiseReal!=null?`${air.noiseReal}dB`:'미연동',rule:'>65dB이면 -15점',pts:(air.noiseReal??air.noise??0)>65?-15:0},
       {factor:'최종 점수',value:'',rule:'합산 (0~100 범위)',pts:sc.air,total:true}
     ],
     urban:[
@@ -2640,8 +2665,8 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
   if(lsc.btGrade<=2)anomalies.push({icon:'⭐',text:`생태등급 우수(${lsc.btGrade}등급) — 보전 우선`,sev:'high'});
   if(wx.wind_speed>7)anomalies.push({icon:'💨',text:`강풍(${wx.wind_speed}m/s) — 수목 피해 위험`,sev:'warning'});
   if(['불량','매우불량'].includes(soil.drainage))anomalies.push({icon:'💧',text:`배수 불량(${soil.drainage}) — 침수 리스크`,sev:'warning'});
-  if(air.pm25>35)anomalies.push({icon:'😷',text:`PM2.5 나쁨(${air.pm25}㎍/㎥) — 차단 녹지 필요`,sev:'warning'});
-  if(air.noise>70)anomalies.push({icon:'🔊',text:`소음 높음(${air.noise}dB) — 방음식재 필요`,sev:'warning'});
+  if(air.pm25!=null&&air.pm25>35)anomalies.push({icon:'😷',text:`PM2.5 나쁨(${air.pm25}㎍/㎥) — 차단 녹지 필요`,sev:'warning'});
+  if(air.noiseReal!=null&&air.noiseReal>70)anomalies.push({icon:'🔊',text:`소음 높음(${air.noiseReal}dB) — 방음식재 필요`,sev:'warning'});
   urb.restr.forEach(r=>anomalies.push({icon:'⚠️',text:`규제: ${r}`,sev:'info'}));
 
   const S=[],W2=[],O=[],T=[];
@@ -2658,7 +2683,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
   if(sc.traffic<50)W2.push(`교통 점수 ${sc.traffic}점 — 접근성 개선 필요`);
   if(urb.restr.length>0)W2.push(`개발 규제 ${urb.restr.length}건 — 설계 자유도 제한`);
   if(eco.treeCov<8)W2.push(`수목 피복 ${eco.treeCov}% — 녹지 극히 부족`);
-  if(air.pm25>35)W2.push(`PM2.5 ${air.pm25}㎍/㎥ — 대기질 나쁨`);
+  if(air.pm25!=null&&air.pm25>35)W2.push(`PM2.5 ${air.pm25}㎍/㎥ — 대기질 나쁨`);
   if(lsc.bar<0.3)W2.push(`BAR ${lsc.bar} — 생태면적률 법적 기준 미달`);
 
   if(urb.greenPlan)O.push('도시 공원화 계획 연계 — 행정 지원 가능');
@@ -2672,7 +2697,7 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
   if(wx.avg_precip>6)T.push(`강수 ${wx.avg_precip}mm/day — 우수 처리 과부하 우려`);
   if(urb.greenbelt)T.push('그린벨트 규제 — 개발 면적 제한');
   T.push('기후변화 극한기상(폭염·폭우) 빈도 증가');
-  if(air.noise>70)T.push(`소음 ${air.noise}dB — 이용자 쾌적성 저하`);
+  if((air.noiseReal??0)>70)T.push(`소음 ${air.noiseReal}dB — 이용자 쾌적성 저하`);
   if(water.floodRisk==='높음')T.push('홍수 위험 높음 — 방재 시설 투자 필요');
 
   const ins=[];
@@ -2696,8 +2721,8 @@ function analyze(eco,wx,soil,air,urb,trf,soc,water,lsc,preset){
     reason:'한강 인접 — 광역 생태축과 직접 연결 가능한 전략적 위치',
     principle:'하천 생태축 연결: 한강 수변 녹지와 내부 녹지를 선형으로 연속 연결',
     example:'수변 완충 식생대 30m / 생태호안(자연형 경사제) / 철새 이동 경로 고려 수목 배치'});
-  if(air.noise>65)ins.push({icon:'🔊',title:'방음 녹지 차폐 설계',
-    reason:`소음 ${air.noise}dB — 쾌적 기준(60dB) 초과 · 이용자 스트레스 상시 노출`,
+  if((air.noiseReal??0)>65)ins.push({icon:'🔊',title:'방음 녹지 차폐 설계',
+    reason:`소음 ${air.noiseReal}dB — 쾌적 기준(60dB) 초과 · 이용자 스트레스 상시 노출`,
     principle:'녹지 차폐 + 지형 활용: 상록 교목 3열 이상 차폐 및 성토 방음둑 병행',
     example:'상록수(스트로브잣나무·편백) 3중 식재 / 0.5~1m 방음 성토 / 수경 음향 마스킹 도입'});
   if(lsc.bar<0.5)ins.push({icon:'🌳',title:'BAR 생태면적률 달성',
@@ -2793,40 +2818,54 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   // ─── 3. PM2.5 대기질 ─────────────────────────────────────────
   // 출처: 환경정책기본법 시행령 별표1 대기환경기준
   // 기준: 연평균 15㎍/㎥ 이하, 일평균 35㎍/㎥ 이하
-  const pm25Status = air.pm25 <= 15 ? 'good' : air.pm25 <= 35 ? 'caution' : 'poor';
-  const pm25Strategies = [];
-  if (air.pm25 > 35) pm25Strategies.push('PM2.5 일평균 기준(35㎍/㎥) 초과 — 상록교목 3열 이상 방진 녹지대 설치 권고');
-  else if (air.pm25 > 15) pm25Strategies.push('연평균 기준(15㎍/㎥) 초과 — 미세먼지 저감 수종 우선 배치, 차폐 녹지 강화');
-  else pm25Strategies.push('대기환경 기준 충족 — 수목 밀도 유지 및 비산먼지 억제 포장재 사용 권장');
-  indicators.push({
-    key:'air', icon:'🫁', label:'PM2.5 대기질',
-    current:`PM2.5 ${air.pm25}㎍/㎥ (${air.pm25g || ''})`,
-    standard:'연평균 15㎍/㎥ 이하 / 일평균 35㎍/㎥ 이하',
-    status: pm25Status,
-    judgment: air.pm25 <= 15 ? '연평균 기준 충족' : air.pm25 <= 35 ? '연평균 기준 초과 (일평균 이하)' : '일평균 기준 초과',
-    source:'환경정책기본법 시행령 별표1 대기환경기준',
-    sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=203772',
-    strategies: pm25Strategies
-  });
+  if(air.pm25!=null){
+    const pm25Status = air.pm25 <= 15 ? 'good' : air.pm25 <= 35 ? 'caution' : 'poor';
+    const pm25Strategies = [];
+    if (air.pm25 > 35) pm25Strategies.push('PM2.5 일평균 기준(35㎍/㎥) 초과 — 상록교목 3열 이상 방진 녹지대 설치 권고');
+    else if (air.pm25 > 15) pm25Strategies.push('연평균 기준(15㎍/㎥) 초과 — 미세먼지 저감 수종 우선 배치, 차폐 녹지 강화');
+    else pm25Strategies.push('대기환경 기준 충족 — 수목 밀도 유지 및 비산먼지 억제 포장재 사용 권장');
+    indicators.push({
+      key:'air', icon:'🫁', label:'PM2.5 대기질',
+      current:`PM2.5 ${air.pm25}㎍/㎥ (${air.pm25g || ''})`,
+      standard:'연평균 15㎍/㎥ 이하 / 일평균 35㎍/㎥ 이하',
+      status: pm25Status,
+      judgment: air.pm25 <= 15 ? '연평균 기준 충족' : air.pm25 <= 35 ? '연평균 기준 초과 (일평균 이하)' : '일평균 기준 초과',
+      source:'환경정책기본법 시행령 별표1 대기환경기준',
+      sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=203772',
+      strategies: pm25Strategies
+    });
+  }else{
+    indicators.push({key:'air',icon:'🫁',label:'PM2.5 대기질',
+      current:'미연동',standard:'연평균 15㎍/㎥ 이하 / 일평균 35㎍/㎥ 이하',status:'unknown',
+      judgment:'에어코리아 API 키 설정 후 실측값 조회 가능',
+      source:'환경정책기본법 시행령 별표1',sourceUrl:'https://www.airkorea.or.kr',strategies:['에어코리아 키를 설정하면 실측 PM2.5 데이터를 자동 연동합니다']});
+  }
 
   // ─── 4. 소음 환경 ─────────────────────────────────────────────
   // 출처: 환경정책기본법 시행령 별표1 소음환경기준
   // 기준: 주거지역 낮 55dB 이하 / 상업지역 낮 65dB 이하
-  const noiseStatus = air.noise <= 55 ? 'good' : air.noise <= 65 ? 'caution' : 'poor';
-  const noiseStrategies = [];
-  if (air.noise > 65) noiseStrategies.push(`소음 ${air.noise}dB — 주거·상업 기준 초과, 방음벽+상록교목 3열 이상 복합 설치 권고`);
-  else if (air.noise > 55) noiseStrategies.push(`소음 ${air.noise}dB — 주거지역 기준 초과, 완충 녹지대 및 수경시설 음향 마스킹 도입`);
-  else noiseStrategies.push('소음 기준 충족 — 자연 소리 요소(수공간·새소리) 강화로 쾌적성 증진 권장');
-  indicators.push({
-    key:'noise', icon:'🔊', label:'소음 환경',
-    current:`${air.noise}dB (${air.noiseg || ''})`,
-    standard:'주거지역 낮 55dB 이하 / 상업지역 낮 65dB 이하',
-    status: noiseStatus,
-    judgment: air.noise <= 55 ? '주거지역 기준 충족' : air.noise <= 65 ? '주거지역 기준 초과 (상업 이하)' : '상업지역 기준 초과',
-    source:'환경정책기본법 시행령 별표1 소음환경기준',
-    sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=203772',
-    strategies: noiseStrategies
-  });
+  if(air.noiseReal!=null){
+    const noiseStatus = air.noiseReal <= 55 ? 'good' : air.noiseReal <= 65 ? 'caution' : 'poor';
+    const noiseStrategies = [];
+    if (air.noiseReal > 65) noiseStrategies.push(`소음 ${air.noiseReal}dB — 주거·상업 기준 초과, 방음벽+상록교목 3열 이상 복합 설치 권고`);
+    else if (air.noiseReal > 55) noiseStrategies.push(`소음 ${air.noiseReal}dB — 주거지역 기준 초과, 완충 녹지대 및 수경시설 음향 마스킹 도입`);
+    else noiseStrategies.push('소음 기준 충족 — 자연 소리 요소(수공간·새소리) 강화로 쾌적성 증진 권장');
+    indicators.push({
+      key:'noise', icon:'🔊', label:'소음 환경',
+      current:`${air.noiseReal}dB (${air.noiseRealg || ''})`,
+      standard:'주거지역 낮 55dB 이하 / 상업지역 낮 65dB 이하',
+      status: noiseStatus,
+      judgment: air.noiseReal <= 55 ? '주거지역 기준 충족' : air.noiseReal <= 65 ? '주거지역 기준 초과 (상업 이하)' : '상업지역 기준 초과',
+      source:'환경정책기본법 시행령 별표1 소음환경기준',
+      sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=203772',
+      strategies: noiseStrategies
+    });
+  }else{
+    indicators.push({key:'noise',icon:'🔊',label:'소음 환경',
+      current:'미연동',standard:'주거지역 낮 55dB 이하 / 상업지역 낮 65dB 이하',status:'unknown',
+      judgment:'환경부 소음측정망 반경 내 측정소 없음 또는 미연동',
+      source:'환경정책기본법 시행령 별표1 소음환경기준',sourceUrl:'https://www.noiseinfo.or.kr',strategies:['현장 소음 측정 (KS A ISO 1996-2 기준) 권장']});
+  }
 
   // ─── 5. 불투수율·수문 환경 ────────────────────────────────────
   // 출처: 환경부 저영향개발(LID) 기술요소 가이드라인(2016)
@@ -2942,10 +2981,10 @@ function buildDesignConditions(wx, lsc, water, eco, soc, trf, air, soil, radius,
       desc:'기존 수목 피복 활용 — 다층 혼식 군집 강화',
       basis:`수목 피복률 ${eco.treeCov}%` });
   }
-  if (air.noise >= 65 || air.pm25 >= 35) {
+  if ((air.noiseReal??0) >= 65 || (air.pm25??0) >= 35) {
     habitats.push({ code:'BUF', label:'완충녹지형', icon:'🛡️',
       desc:'고소음·고미세먼지 — 방음·방진 차폐녹지 우선',
-      basis: air.noise >= 65 ? `소음 ${air.noise}dB` : `PM2.5 ${air.pm25}㎍/㎥` });
+      basis: (air.noiseReal??0) >= 65 ? `소음 ${air.noiseReal}dB` : `PM2.5 ${air.pm25}㎍/㎥` });
   }
   if (habitats.length === 0) {
     habitats.push({ code:'URB', label:'도시공원형', icon:'🏙️',
@@ -3151,7 +3190,7 @@ function buildDesignConditions(wx, lsc, water, eco, soc, trf, air, soil, radius,
     designTargets.push('② 수변 생태 복원 — 수변교목·정수식물 군집 조성');
   if (eco.treeCov < 15)
     designTargets.push('③ 수목 피복률 확대 — 교목 식재로 그늘·탄소흡수 강화');
-  if (air.noise >= 55 || air.pm25 >= 15)
+  if ((air.noiseReal??0) >= 55 || (air.pm25??0) >= 15)
     designTargets.push('④ 환경 완충 — 방음·방진 차폐녹지대 조성');
   if (eco.grade <= 2)
     designTargets.push('⑤ 생태보전 — 자생종 중심 자연 천이 군집 보전·복원');
@@ -3214,7 +3253,7 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
   // ── URB: 고밀 도시·열섬·불투수 ──────────────────────────
   if (water.impRatio >= 70 && (soc.popD!=null && soc.popD > 10000))      { types.URB.score += 40; types.URB.basis.push(`불투수 ${water.impRatio}% + 인구 ${soc.popD.toLocaleString()}명/㎢`); }
   if (urb && urb.zone && (urb.zone.includes('상업') || urb.zone.includes('준주거'))) { types.URB.score += 30; types.URB.basis.push(`용도: ${urb.zone}`); }
-  if (air.pm25 >= 25 && air.noise >= 60)             { types.URB.score += 20; types.URB.basis.push(`PM2.5 ${air.pm25}㎍/㎥ + 소음 ${air.noise}dB`); }
+  if ((air.pm25??0) >= 25 && (air.noiseReal??0) >= 60){ types.URB.score += 20; types.URB.basis.push(`PM2.5 ${air.pm25}㎍/㎥ + 소음 ${air.noiseReal}dB`); }
   if ((soc.popD!=null && soc.popD > 15000))                              { types.URB.score += 10; types.URB.basis.push('인구밀도 고밀 (15,000명/㎢↑)'); }
 
   // ── ECO: 생태 보전·법정 보호 ──────────────────────────────
@@ -3340,8 +3379,8 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
     },
     {
       phase:'⑤ 도시맥락', icon:'🏙️',
-      status: soc.popD!=null && soc.popD > 20000 ? '주의' : (air.pm25 >= 35 || air.noise >= 65) ? '주의' : (soc.popD!=null && soc.popD > 5000) ? '양호' : '기회',
-      note: soc.popD!=null && soc.popD > 20000 ? `인구 ${soc.popD.toLocaleString()}명/㎢ 고밀` : air.noise >= 65 ? `소음 ${air.noise}dB` : `PM2.5 ${air.pm25}㎍/㎥`
+      status: soc.popD!=null && soc.popD > 20000 ? '주의' : ((air.pm25??0) >= 35 || (air.noiseReal??0) >= 65) ? '주의' : (soc.popD!=null && soc.popD > 5000) ? '양호' : '기회',
+      note: soc.popD!=null && soc.popD > 20000 ? `인구 ${soc.popD.toLocaleString()}명/㎢ 고밀` : (air.noiseReal??0) >= 65 ? `소음 ${air.noiseReal}dB` : air.pm25!=null ? `PM2.5 ${air.pm25}㎍/㎥` : '대기·소음 미연동'
     },
   ];
 
@@ -3371,8 +3410,8 @@ function classifySiteType(wx, lsc, water, eco, soc, trf, air, soil, urb, elev) {
   // 주 입지 타입을 보완하는 조건별 특성 레이블
   const aspects = [];
   if (wx.windspeed >= 5)   aspects.push({ label:'강풍 노출형', icon:'💨', color:'#90a4ae', basis:`풍속 ${wx.windspeed}m/s` });
-  if (air.pm25 >= 25)      aspects.push({ label:'대기질 취약형', icon:'🌫️', color:'#b0bec5', basis:`PM2.5 ${air.pm25}㎍/㎥` });
-  if (air.noise >= 65)     aspects.push({ label:'소음 취약형', icon:'🔊', color:'#ef9a9a', basis:`${air.noise}dB` });
+  if ((air.pm25??0) >= 25)          aspects.push({ label:'대기질 취약형', icon:'🌫️', color:'#b0bec5', basis:`PM2.5 ${air.pm25}㎍/㎥` });
+  if ((air.noiseReal??0) >= 65)     aspects.push({ label:'소음 취약형', icon:'🔊', color:'#ef9a9a', basis:`${air.noiseReal}dB` });
   if (water.impRatio >= 70) aspects.push({ label:'LID 필수형', icon:'💧', color:'#4fc3f7', basis:`불투수 ${water.impRatio}%` });
   if (eco.treeCov < 10)    aspects.push({ label:'녹음 부족형', icon:'🌳', color:'#a5d6a7', basis:`수목피복 ${eco.treeCov}%` });
   const sAspSlope = (elev && elev.slope != null ? elev.slope : (soil.slope || 0));
@@ -3457,11 +3496,11 @@ function buildSpatialStrategy(wx, lsc, water, eco, soc, trf, air, soil) {
   if (trf && (trf.peds!=null && trf.peds > 8000))
     strategies.push({ trigger:'보행량 많음', data:`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명/일`, response:'통과형 동선 우선 + 그늘 쉼터 집중 배치', icon:'🚶', priority:'high' });
 
-  if (air.pm25 >= 25)
+  if ((air.pm25??0) >= 25)
     strategies.push({ trigger:'PM2.5 나쁨', data:`${air.pm25}㎍/㎥`, response:'차폐녹지 (방진식재대) — 상록교목 3열 이상 밀식', icon:'🌫️', priority:'high' });
 
-  if (air.noise >= 55)
-    strategies.push({ trigger:'소음 높음', data:`${air.noise}dB`, response:'소음완충 + 시야차폐 — 상록관목 밀식 + 토성 마운딩', icon:'🔊', priority: air.noise >= 65 ? 'high' : 'med' });
+  if ((air.noiseReal??0) >= 55)
+    strategies.push({ trigger:'소음 높음', data:`${air.noiseReal}dB`, response:'소음완충 + 시야차폐 — 상록관목 밀식 + 토성 마운딩', icon:'🔊', priority: (air.noiseReal??0) >= 65 ? 'high' : 'med' });
 
   if (water.impRatio >= 60)
     strategies.push({ trigger:'불투수율 높음', data:`${water.impRatio}%`, response:'투수포장 + 빗물정원 — 불투수율 10%p 이상 저감', icon:'💧', priority:'high' });
@@ -3721,11 +3760,11 @@ function renderResults(d){
         <div class="perf-ind-header">
           <span class="perf-ind-icon">${ind.icon}</span>
           <span class="perf-ind-label">${ind.label}</span>
-          <span class="perf-badge-${ind.status}">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':'❌ 기준미달'}</span>
+          <span class="perf-badge-${ind.status}">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':ind.status==='unknown'?'⬡ 미연동':'❌ 기준미달'}</span>
         </div>
         <div class="perf-ind-current">${ind.current}</div>
         <div class="perf-ind-standard">기준: ${ind.standard}</div>
-        <div class="perf-ind-judgment" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':'#ef9a9a'}">▶ ${ind.judgment}</div>
+        <div class="perf-ind-judgment" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':ind.status==='unknown'?'#78909c':'#ef9a9a'}">▶ ${ind.judgment}</div>
         ${ind.note ? `<div class="perf-ind-note">${ind.note}</div>` : ''}
         <div style="margin-top:4px">${ind.strategies.slice(0,2).map(s=>`<div class="perf-strategy-item">${s}</div>`).join('')}</div>
         <a class="perf-source-link" href="${ind.sourceUrl}" target="_blank">📋 ${ind.source}</a>
@@ -3733,18 +3772,31 @@ function renderResults(d){
     </div>
     <div class="card" id="tab-card">
       <div class="tab-bar">
-        <button class="tab-btn active" onclick="tab('anomaly',this)">🔍 특이점</button>
-        <button class="tab-btn" onclick="tab('eco',this)">🌿 생태</button>
-        <button class="tab-btn" onclick="tab('climate',this)">🌤️ 기후</button>
-        <button class="tab-btn" onclick="tab('soil',this)">🪨 토양</button>
-        <button class="tab-btn" onclick="tab('urban',this)">🏗️ 도시</button>
-        <button class="tab-btn" onclick="tab('water',this)">🌊 수환경</button>
-        <button class="tab-btn" onclick="tab('landscape',this)">🏞️ 경관</button>
-        <button class="tab-btn" onclick="tab('social',this)">👥 사회</button>
-        <button class="tab-btn" onclick="tab('perf',this)" style="color:#4fc3f7;">🌡️ 성능</button>
+        <button class="tab-btn active" onclick="tab('anomaly',this)">🔍 종합·SWOT</button>
+        <button class="tab-btn" onclick="tab('climate',this)">🌤️ 기후·기상</button>
+        <button class="tab-btn" onclick="tab('soil',this)">🏔️ 지형·토양</button>
+        <button class="tab-btn" onclick="tab('water',this)">🌊 수문·배수</button>
+        <button class="tab-btn" onclick="tab('eco',this)">🌿 식생·생태</button>
+        <button class="tab-btn" onclick="tab('urban',this)">🏗️ 인프라</button>
+        <button class="tab-btn" onclick="tab('social',this)">⚖️ 법적·사회</button>
+        <button class="tab-btn" onclick="tab('perf',this)" style="color:#4fc3f7;">📊 성능·데이터</button>
       </div>
 
-      <div class="tab-content active" id="tab-anomaly"><div class="anomaly-list">${anomalyHtml}</div></div>
+      <div class="tab-content active" id="tab-anomaly">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:6px;letter-spacing:.06em">── Opportunities · Constraints ──</div>
+        <div class="anomaly-list">${anomalyHtml}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 분석 순서 (Desktop Study) ──</div>
+        <div style="font-size:11px;color:#78909c;line-height:1.7;padding:4px 0">
+          ① 기후·기상 — 기온·강수·내한성·풍향 확인<br>
+          ② 지형·토양 — 고도·경사·토성·pH·지하수위<br>
+          ③ 수문·배수 — 홍수·불투수율·LID 가능성<br>
+          ④ 식생·생태 — 자연도·비오톱·멸종위기종<br>
+          ⑤ 인프라 — 교통·접근·소음·건물·유틸리티<br>
+          ⑥ 법적·사회 — 용도지역·규제·녹지율·이용자<br>
+          <span style="color:#4fc3f7">→ 현장 답사 후 Overlay Diagram 제작</span>
+        </div>
+      </div>
 
       <div class="tab-content" id="tab-eco">
         <!-- ① 생태자연도 상세정보 (항상 표시) -->
@@ -3786,6 +3838,16 @@ function renderResults(d){
         ${eco.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         ${eco.nearHan||water.floodRisk==='높음'?`<div class="data-row"><span class="data-key">상수원 보호구역</span><span class="data-val"><span style="color:#ef9a9a;font-size:11px">⚠️ 수계 인접 — 확인 필요</span></span></div>`:''}
         ${(urb.restr&&urb.restr.length)?`<div class="data-row"><span class="data-key">법적 규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- 경관·비오톱 (생태 연속) -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 경관 · 비오톱 ──</div>
+        <div class="data-row"><span class="data-key">BAR 생태면적률</span><span class="data-val" style="color:${lsc.bar>=0.5?'#4fc3f7':lsc.bar>=0.3?'#ffb74d':'#ef9a9a'};font-weight:700">${lsc.bar}</span></div>
+        <div style="margin:6px 0 8px">${barHtml}</div>
+        <div class="data-row"><span class="data-key">비오톱 등급</span><span class="data-val">${badge(`${lsc.btGrade}등급`,lsc.btGrade<=2?'green':'yellow')}</span></div>
+        <div class="data-row"><span class="data-key">경관 유형</span><span class="data-val">${lsc.landType}</span></div>
+        <div class="data-row"><span class="data-key">조망 품질</span><span class="data-val">${lsc.viewQuality}점 <span style="font-size:10px;color:#78909c">(${lsc.lsGrade})</span></span></div>
+        ${lsc.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:2px 0">${i}</div>`).join('')}
+        <div class="source-row">⬡ ${lsc.source}</div>
       </div>
 
       <div class="tab-content" id="tab-climate">
@@ -3842,8 +3904,8 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip!=null?water.annualPrecip.toLocaleString()+'mm':'—'} <span style="font-size:10px;color:#546e7a">⬡ 추정</span></span></div>
-        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px">7~8월 집중${water.annualPrecip!=null?' · 여름 ~'+Math.round(water.annualPrecip*0.62)+'mm':''}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
+        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px;color:#546e7a">—</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 ──</div>
         <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
@@ -3887,10 +3949,11 @@ function renderResults(d){
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>
-        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}</span></div>
-        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noise}dB ${badge(air.noiseg,air.noise>70?'red':air.noise>60?'yellow':'green')}</span></div>
-        ${[...soil.implications,...air.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <div class="source-row">${air.reliability==='real'?'● 실시간':'⬡ 시뮬레이션'} · ${air.source}${air.station?' ('+air.station+')':''}</div>
+        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25!=null?`${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}`:badge('미연동','grey')}</span></div>
+        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal!=null?`${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}`:badge('미연동','grey')}</span></div>
+        ${[...soil.implications,...(air.pm25!=null||air.noiseReal!=null?air.implications:[])].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
+        <div class="source-row">${air.reliability==='real'?`● 실시간 (${air.source}${air.station?' · '+air.station:''})`:badge('에어코리아 키 필요','grey')+' <a href="https://www.airkorea.or.kr/" target="_blank" style="color:#4fc3f7;font-size:10px">발급</a>'}</div>
+        ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:'<div class="source-row">'+badge('소음측정망 미연동','grey')+'</div>'}
         <div class="source-row">⬡ ${soil.source}</div>
       </div>
 
@@ -3920,29 +3983,44 @@ function renderResults(d){
       </div>
 
       <div class="tab-content" id="tab-water">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 우수유출 · 홍수위험 ──</div>
         <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodRisk==='높음'?badge(water.floodRisk,'red'):water.floodRisk==='중간'?badge(water.floodRisk,'yellow'):badge(water.floodRisk,'green')}</span></div>
-        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">Ⅰ~Ⅴ중 ${water.wqGrade}등급</span></div>
-        <div class="data-row"><span class="data-key">불투수율</span><span class="data-val">${water.impRatio}% ${water.impRatio>70?badge('개선권장','red'):''}</span></div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${water.annualPrecip}mm</span></div>
+        <div class="data-row"><span class="data-key">불투수율</span><span class="data-val">${water.impRatio}% ${water.impRatio>70?badge('LID 적용 권장','red'):water.impRatio>50?badge('개선 검토','yellow'):badge('양호','green')}</span></div>
+        ${water.impRatio>50?`<div style="font-size:11px;color:#ffb74d;padding:2px 0 6px">→ 빗물정원·투수포장·옥상녹화 등 LID 기법 도입 검토</div>`:''}
         <div class="data-row"><span class="data-key">산사태 위험</span><span class="data-val">${badge(water.landslideRisk,water.landslideRisk==='높음'?'red':water.landslideRisk==='중간'?'yellow':'green')}</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 수계 · 수질 ──</div>
+        <div class="data-row"><span class="data-key">수계 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):water.hasSurface?badge('소하천 인접','blue'):'없음'}</span></div>
+        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">${water.wqGrade&&water.wqReliability==='real'?`Ⅰ~Ⅴ중 ${water.wqGrade}등급 <span style="font-size:10px;color:#78909c">(${water.wqText||''})</span>`:badge('현장 수질 조사 필요','grey')}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs&&cs.annualPrecip?cs.annualPrecip.toLocaleString()+'mm <span style="font-size:10px;color:#81c784">● 실측</span>':'<span style="color:#546e7a">— (기후 탭 연동 후 표시)</span>'}</span></div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 관개 가능성 ──</div>
+        <div class="data-row"><span class="data-key">관개 필요도</span><span class="data-val">${cs&&cs.annualPrecip&&cs.annualPrecip<1000?badge('관개 필요','red'):cs&&cs.annualPrecip&&cs.annualPrecip>1200?badge('관개 보조 충분','green'):'추가 분석 필요'}</span></div>
+        <div class="data-row"><span class="data-key">우수 재활용</span><span class="data-val" style="font-size:11px">${eco.nearHan||water.hasSurface?'수계 인접 — 친수공간·우수활용 유리':'우수저류조 검토 권장'}</span></div>
         ${water.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <div class="source-row">⬡ ${water.source}</div>
-      </div>
-
-      <div class="tab-content" id="tab-landscape">
-        <div class="data-row"><span class="data-key">BAR 생태면적률</span><span class="data-val" style="color:${lsc.bar>=0.5?'#4fc3f7':lsc.bar>=0.3?'#ffb74d':'#ef9a9a'};font-weight:700">${lsc.bar}</span></div>
-        <div style="margin:10px 0;padding:10px 0;border-top:1px solid #1e3a4f;border-bottom:1px solid #1e3a4f">${barHtml}</div>
-        <div class="data-row"><span class="data-key">생태등급</span><span class="data-val">${badge(`${lsc.btGrade}등급`,lsc.btGrade<=2?'green':'yellow')}</span></div>
-        <div class="data-row"><span class="data-key">경관 유형</span><span class="data-val">${lsc.landType}</span></div>
-        <div class="data-row"><span class="data-key">경관 품질 점수</span><span class="data-val">${lsc.viewQuality}점</span></div>
-        ${lsc.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <div class="source-row">⬡ ${lsc.source}</div>
+        <div class="source-row">${water.floodReliability==='real'?'● 홍수위험 실측 (국토부)':'⬡ 홍수위험 미연동'} · ${water.source}</div>
       </div>
 
       <div class="tab-content" id="tab-social">
+        <!-- 법적 조건 -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 법적 · 규제 조건 ──</div>
+        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
+        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
+        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
+        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
+        ${reg&&reg.items&&reg.items.length?`
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 식재 기준 · 녹지 비율 ──</div>
+        ${reg.items.map(r=>`<div class="data-row"><span class="data-key">${r.label}</span><span class="data-val" style="font-size:11px">${r.value}</span></div>`).join('')}
+        `:''}
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <!-- 사회적 조건 -->
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 사회 · 인구 조건 ──</div>
         ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
         ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join(''):''}
-        <div style="margin-top:8px"><div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 프로그램 제안</div>${soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}</div>
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 이용 프로그램 제안</div>
+        ${soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}
         <div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>
       </div>
 
@@ -3958,12 +4036,12 @@ function renderResults(d){
           <div class="perf-detail-section">
             <div class="perf-detail-title">
               ${ind.icon} ${ind.label}
-              <span class="perf-badge-${ind.status}" style="margin-left:8px;font-size:10px">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':'❌ 기준미달'}</span>
+              <span class="perf-badge-${ind.status}" style="margin-left:8px;font-size:10px">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':ind.status==='unknown'?'⬡ 미연동':'❌ 기준미달'}</span>
             </div>
             <div class="perf-std-box">
               <div class="perf-std-row">
                 <span class="perf-std-key">현재값</span>
-                <span class="perf-std-val" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':'#ef9a9a'}">${ind.current}</span>
+                <span class="perf-std-val" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':ind.status==='unknown'?'#78909c':'#ef9a9a'}">${ind.current}</span>
               </div>
               <div class="perf-std-row">
                 <span class="perf-std-key">공인 기준</span>
@@ -3971,7 +4049,7 @@ function renderResults(d){
               </div>
               <div class="perf-std-row">
                 <span class="perf-std-key">판정</span>
-                <span class="perf-std-val" style="font-weight:700;color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':'#ef9a9a'}">${ind.judgment}</span>
+                <span class="perf-std-val" style="font-weight:700;color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':ind.status==='unknown'?'#78909c':'#ef9a9a'}">${ind.judgment}</span>
               </div>
             </div>
             ${ind.note ? `<div class="perf-note-box">${ind.note}</div>` : ''}
@@ -4198,8 +4276,8 @@ async function downloadPDF(){
             ['토양 유형',soil.soil_type,'식재 기반'],
             ['토양 배수',soil.drainage,'우수 처리 계획'],
             ['토양 pH',String(soil.ph),'수종·개량재 선택'],
-            ['PM2.5',`${air.pm25}㎍/㎥ (${air.pm25g})`,'방진 녹지 계획'],
-            ['소음',`${air.noise}dB (${air.noiseg})`,'방음식재 계획'],
+            ['PM2.5',air.pm25!=null?`${air.pm25}㎍/㎥ (${air.pm25g})`:'미연동','방진 녹지 계획'],
+            ['소음',air.noiseReal!=null?`${air.noiseReal}dB (${air.noiseRealg})`:'미연동','방음식재 계획'],
             ['용도지역',urb.zone,'개발 가능 범위'],
             ['지하철 거리',`${trf.subDist}m (${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'})`,'접근성 판단'],
             ['일평균 보행량',`${trf.peds!=null?trf.peds.toLocaleString():'미연동'}명 (${trf.pedLv})`,'이용 수요'],
@@ -4273,7 +4351,7 @@ ${pf.indicators.filter(ind=>['air','hydro','heat'].includes(ind.key)).map((ind,i
             <td style="padding:5px 8px;font-weight:600">${ind.icon} ${ind.label}</td>
             <td style="padding:5px 8px;color:#1565c0">${ind.current}</td>
             <td style="padding:5px 8px;color:#37474f;font-size:10px">${ind.standard}</td>
-            <td style="padding:5px 8px;font-weight:700;color:${ind.status==='good'?'#2e7d32':ind.status==='caution'?'#e65100':'#c62828'}">${ind.status==='good'?'✅ 충족':ind.status==='caution'?'⚠️ 주의':'❌ 미달'}</td>
+            <td style="padding:5px 8px;font-weight:700;color:${ind.status==='good'?'#2e7d32':ind.status==='caution'?'#e65100':ind.status==='unknown'?'#78909c':'#c62828'}">${ind.status==='good'?'✅ 충족':ind.status==='caution'?'⚠️ 주의':ind.status==='unknown'?'⬡ 미연동':'❌ 미달'}</td>
             <td style="padding:5px 8px;font-size:9px;color:#78909c">${ind.source}</td>
           </tr>`).join('')}
         </table>
@@ -4700,8 +4778,8 @@ const KMA_ASOS_STN=[
 function findNearestStn(lat, lng){
   let nearest=null, minDist=Infinity;
   for(const s of KMA_ASOS_STN){
-    const dist=haversine(lat,lng,s[1],s[2]);
-    if(dist<minDist){minDist=dist;nearest=s;}
+    const d=dist(lat,lng,s[1],s[2]);
+    if(d<minDist){minDist=d;nearest=s;}
   }
   return{id:nearest[0],lat:nearest[1],lng:nearest[2],name:nearest[3],alt:nearest[4],distKm:+(minDist/1000).toFixed(1)};
 }
@@ -4726,6 +4804,34 @@ const ECVAM_KEY=KEYS.envgrd; // YD6X-CR5X-EJDT-V2OJ
 const ECVAM_DOMAIN='hubminyoung.github.io';
 // data.go.kr → Worker 라우트: /kma /soil-v2 /soil-v3 /airkorea /nibr /vworld-data
 // 추가 필요 라우트: /ecobank-wms (nie-ecobank.kr) /floodmap-wms (floodmap.go.kr) /gg-api (openapi.gg.go.kr)
+
+// ════════════════════════════════════════════
+// 재시도 유틸 — 502/503/520/521/522/504 일시 오류 자동 재시도
+// ════════════════════════════════════════════
+async function fetchWithRetry(url, options={}, retries=2, baseDelay=1200){
+  for(let i=0;i<=retries;i++){
+    try{
+      const r=await fetch(url,options);
+      // 서버 일시 오류 코드 → 재시도
+      if([502,503,520,521,522,504].includes(r.status)){
+        if(i<retries){
+          console.warn(`fetchWithRetry: HTTP ${r.status} — ${baseDelay*(i+1)}ms 후 재시도 (${i+1}/${retries})`);
+          await new Promise(res=>setTimeout(res,baseDelay*(i+1)));
+          continue;
+        }
+        return r; // 마지막 시도 결과 반환
+      }
+      return r;
+    }catch(e){
+      if(i<retries){
+        console.warn(`fetchWithRetry: 네트워크 오류 — 재시도 (${i+1}/${retries}):`,e.message);
+        await new Promise(res=>setTimeout(res,baseDelay*(i+1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 
 function openSettings(){
   try{
@@ -5265,12 +5371,16 @@ async function fetchMceeLC(lat,lng){
 async function fetchPNU(lat,lng){
   try{
     const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&data=LP_PA_CBND_BUBUN&format=json&geomFilter=POINT(${lng}%20${lat})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
-    const d=await(await fetch(url)).json();
+    const res=await fetchWithRetry(url,{signal:AbortSignal.timeout(15000)},2,1500);
+    if(!res.ok) throw new Error('fetchPNU HTTP '+res.status);
+    const txt=await res.text();
+    if(txt.trim().startsWith('<')){console.warn('fetchPNU HTML 응답 — VWorld 일시 불안정');return null;}
+    const d=JSON.parse(txt);
     if(d&&d.response&&d.response.status==='OK'){
       const f=d.response.result?.featureCollection?.features?.[0];
       return f?.properties?.PNU||f?.properties?.pnu||null;
     }
-  }catch(e){console.warn('fetchPNU 오류:',e);}
+  }catch(e){console.warn('fetchPNU 오류:',e.message);}
   return null;
 }
 
@@ -6321,8 +6431,8 @@ async function getRealAir(c){
         const pm25=pm25vals[Math.floor(pm25vals.length/2)]||0;
         const pm10=pm10vals[Math.floor(pm10vals.length/2)]||0;
         const pm25g=pm25<15?'좋음':pm25<35?'보통':pm25<75?'나쁨':'매우나쁨';
-        const noiseSim=document.querySelector&&analysisResult?analysisResult.air.noise:50;
-        return{pm25,pm10,pm25g,noiseg:'시뮬레이션',noise:noiseSim,
+        // 소음은 에어코리아와 별개 — 실측없으면 null로 반환 (추정 안 함)
+        return{pm25,pm10,pm25g,
           station:sidoName+' 지역 평균 ('+valid.length+'개 측정소)',
           source:'실제 (에어코리아 한국환경공단)',reliability:'real'};
       }
