@@ -827,8 +827,11 @@ async function runAnalysisAt(coords){
     addrField.value=`위도 ${coords.lat.toFixed(6)}, 경도 ${coords.lng.toFixed(6)}`;
   }
   // _savedCoords에 좌표 보관 → runAnalysis에서 재지오코딩 없이 바로 사용
+  // ⚠️ 분석 완료 후 반드시 지워야 함 — 안 지우면 이후 새 주소 입력 시 이 좌표가 재사용됨
   window._savedMapCoords=coords;
   await _doAnalysis(address, coords);
+  // 분석 완료 후 소비 — 이후 버튼 클릭은 주소 필드를 다시 지오코딩하도록
+  window._savedMapCoords=null;
 }
 
 async function runAnalysis(){
@@ -908,8 +911,19 @@ function cancelLocation(){
 }
 
 let _analysisRunning=false;
+let _pendingAnalysis=null; // 분석 중 클릭된 대기 좌표
 async function _doAnalysis(address, coords){
-  if(_analysisRunning){ console.warn('⚠️ 분석 중 — 중복 실행 차단'); return; }
+  if(_analysisRunning){
+    // 현재 분석 중이면 대기 좌표만 저장 (분석 완료 후 재실행 안함 — 단순 차단)
+    console.warn('⚠️ 분석 중 — 중복 실행 차단 (이전 분석 완료 후 다시 클릭)');
+    // 로딩 텍스트로 안내
+    const ls=document.getElementById('loadingStep');
+    if(ls) ls.textContent='이전 분석 진행 중 — 완료 후 다시 클릭해주세요';
+    const ld=document.getElementById('loading');
+    if(ld) ld.style.display='flex';
+    setTimeout(()=>{ const l2=document.getElementById('loading'); if(l2&&_analysisRunning) l2.style.display='flex'; },100);
+    return;
+  }
   _analysisRunning=true;
   const btn=document.getElementById('analyzeBtn');
   btn.disabled=true;
@@ -1186,13 +1200,15 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://soil.rda.go.kr/soil/',verifyLabel:'흙토람 직접 확인'});
     }
 
-    // ── 농경지화학성 V2 (pH·유기물·유효인산) + 지하수위 병렬 조회 ──
-    const [soilChemRes, gwRes] = await Promise.allSettled([
+    // ── 농경지화학성 V2 (pH·유기물·유효인산) + 지하수위 + 토양오염도 병렬 조회 ──
+    const [soilChemRes, gwRes, soilContamRes] = await Promise.allSettled([
       getRealSoilChem(pnu),
-      getRealGroundwater(coords)
+      getRealGroundwater(coords),
+      getRealSoilContamination(address)
     ]);
-    const soilChem = soilChemRes.status==='fulfilled' ? soilChemRes.value : null;
-    const gwReal   = gwRes.status==='fulfilled'       ? gwRes.value       : null;
+    const soilChem    = soilChemRes.status==='fulfilled'    ? soilChemRes.value    : null;
+    const gwReal      = gwRes.status==='fulfilled'          ? gwRes.value          : null;
+    const soilContam  = soilContamRes.status==='fulfilled'  ? soilContamRes.value  : null;
     if(soilChem){
       if(soilChem.ph!=null)  soil.ph=soilChem.ph;
       if(soilChem.om!=null)  soil.om=soilChem.om;
@@ -1212,6 +1228,19 @@ async function _doAnalysis(address, coords){
         note:`최근접 관측정 "${gwReal.wellName}" (${gwReal.dist}m)`,
         values:`지하수위 ${gwReal.level}m EL / 심도 ${gwReal.depth??'—'}m`,
         status:'real',verifyUrl:'https://www.gims.go.kr/',verifyLabel:'지하수정보시스템'});
+    }
+    if(soilContam){
+      soil.contamination=soilContam;
+      if(soilContam.contaminated){
+        soil.implications.push(`☢️ 토양오염 우려기준 초과 — ${soilContam.exceedances.map(e=>e.name+'('+e.value+'mg/kg)').join(', ')}`);
+      }
+      dataLog.push({category:'토양오염도 (식품안전나라)',icon:'☢️',api:'식품안전나라 토양실태조사 I2390',
+        url:'https://www.foodsafetykorea.go.kr/',
+        note:`${soilContam.addr} 반경 조사자료 ${soilContam.totalItems}건 (${soilContam.examYr}년 / ${soilContam.chartrCl})`,
+        values:soilContam.contaminated
+          ?`⚠️ 우려기준 초과 항목: ${soilContam.exceedances.map(e=>e.name+' '+e.ratio+'배').join(', ')}`
+          :'✅ 모든 측정 항목 우려기준 이하',
+        status:'real',verifyUrl:'https://www.foodsafetykorea.go.kr/',verifyLabel:'식품안전나라 확인'});
     }
 
     // ── 서식종: NIBR(전국) + 경기도 보호종/보호수(경기도 한정) 병렬 조회 ──
@@ -1816,10 +1845,12 @@ async function getKMAClimateSummary(c){
         if(r['_'+idx]!==undefined) return kmaNum(r['_'+idx]);  // 헤더 없을 때 인덱스 폴백
         return kmaNum(Object.values(r)[idx]);                   // Object.values 폴백
       };
+      console.log('📡 KMA 파싱 rows:',rows.length,'헤더:',rows[0]?Object.keys(rows[0]).join(','):'(헤더없음)','첫행값:',rows[0]?Object.values(rows[0]).slice(0,8).join('|'):'—');
       const yearMeans  =rows.map(r=>getCol(r,'TA_YAVG',5)).filter(v=>!isNaN(v));
       const yearMaxAvgs=rows.map(r=>getCol(r,'TMX_YAVG',6)).filter(v=>!isNaN(v));  // 연평균 최고기온
       const yearMinAvgs=rows.map(r=>getCol(r,'TMN_YAVG',7)).filter(v=>!isNaN(v));  // 연평균 최저기온
       const yearMins   =rows.map(r=>getCol(r,'TMN',12)).filter(v=>!isNaN(v));       // 극한 최저기온 (TMN은 col12)
+      console.log('📡 KMA 기온 파싱결과 — 연평균:',yearMeans,'최고:',yearMaxAvgs,'최저:',yearMinAvgs,'극한:',yearMins);
       if(yearMeans.length)   annualMean=+(yearMeans.reduce((a,b)=>a+b,0)/yearMeans.length).toFixed(1);
       if(yearMaxAvgs.length) annualMax =+(yearMaxAvgs.reduce((a,b)=>a+b,0)/yearMaxAvgs.length).toFixed(1);
       if(yearMinAvgs.length) annualMin =+(yearMinAvgs.reduce((a,b)=>a+b,0)/yearMinAvgs.length).toFixed(1);
@@ -3836,6 +3867,14 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${soil.slope}°</span></div>
         ${(elev&&elev.elevation<15||soil.gw<1)?`<div class="data-row"><span class="data-key">수문지질</span><span class="data-val" style="font-size:11px">충적층 — 표면 배수 불량·물 고임 가능</span></div>`:''}
         <div class="data-row"><span class="data-key">식재 적합성</span><span class="data-val">${badge(soil.suitability,soil.ok?'green':'yellow')}</span></div>
+        ${soil.contamination?`
+        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
+        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토양오염도 (${soil.contamination.examYr}년) ──</div>
+        <div class="data-row"><span class="data-key">오염 판정</span><span class="data-val">${soil.contamination.contaminated?'<span style="color:#ef9a9a;font-weight:700">⚠️ 우려기준 초과</span>':badge('기준 이하','green')}</span></div>
+        <div class="data-row"><span class="data-key">조사 유형</span><span class="data-val" style="font-size:11px">${soil.contamination.chartrCl}</span></div>
+        ${soil.contamination.contaminated?soil.contamination.exceedances.map(e=>`<div class="data-row"><span class="data-key">${e.name}</span><span class="data-val" style="color:#ef9a9a">${e.value}mg/kg <span style="font-size:10px">(기준${e.std} · ${e.ratio}배)</span></span></div>`).join(''):''}
+        <div class="data-row" style="flex-wrap:wrap;gap:3px">${Object.entries(soil.contamination.measured).slice(0,6).map(([k,v])=>`<span style="font-size:10px;color:#78909c;background:#0d1f2d;padding:2px 5px;border-radius:3px">${{CDMM:'Cd',COPPR:'Cu',AS_:'As',MRC:'Hg',PB:'Pb',CR6:'Cr6+',ZINC:'Zn',NICKEL:'Ni'}[k]||k}:${v}</span>`).join('')}</div>
+        `:''}
         ${(soil.paddyGrade||soil.uplandGrade||soil.forestGrade)?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지이용 적성 (흙토람 V3) ──</div>
@@ -4548,7 +4587,8 @@ const KEYS={
   gyeonggi:'f195170eba6849b1a7ebf5d594e20346',
   sgis:'06597bea25f14d129211',         // 통계청 SGIS consumer_key
   sgisSecret:'e9d00ead80e84464b936',    // 통계청 SGIS consumer_secret
-  groundwater:'ef358cd35c6fb75cf6fd9871eb4b8eb5167fe146834671c1ea7988e9dbf572'  // 국가지하수정보시스템
+  groundwater:'ef358cd35c6fb75cf6fd9871eb4b8eb5167fe146834671c1ea7988e9dbf572',  // 국가지하수정보시스템
+  soilContam:'5e37be4b27d44cbc851b'  // 식품안전나라 토양실태조사(I2390) — 토양오염도
 };
 
 // ════════════════════════════════════════════
@@ -5622,6 +5662,64 @@ async function getRealGroundwater(coords){
     }
     return null;
   }catch(e){console.warn('지하수위 API 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 식품안전나라 I2390 — 토양실태조사 오염도
+// ════════════════════════════════════════════
+async function getRealSoilContamination(address){
+  if(!KEYS.soilContam) return null;
+  try{
+    // 시군구 수준 주소 추출 (예: "경기도 양평군 양서면 ..." → "경기도 양평군")
+    const addrShort=(()=>{
+      const parts=(address||'').split(/\s+/);
+      // 읍·면·동·리 이전까지만
+      let end=parts.length;
+      for(let i=0;i<parts.length;i++){
+        if(/[읍면동리]$/.test(parts[i])){ end=i+1; break; }
+      }
+      return parts.slice(0,Math.min(end,3)).join(' ');
+    })();
+    if(!addrShort) return null;
+
+    const url=`${WORKER_URL}/soil-contamination/${KEYS.soilContam}/I2390/json/1/20?ADDR=${encodeURIComponent(addrShort)}`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
+    const txt=await r.text();
+    if(!txt||txt.includes('ERROR')) return null;
+
+    let data;
+    try{ data=JSON.parse(txt); }catch(e){ return null; }
+
+    const items=data?.I2390?.row||[];
+    if(!items.length) return null;
+
+    // 한국 토양오염 우려기준 (1지역: 주거·농경지) mg/kg
+    const STD1={CDMM:4,COPPR:150,AS_:25,MRC:4,PB:200,CR6:5,ZINC:300,NICKEL:100,IMCOW:400,TPH:500,BENZ:1,TOLUE:20,ETBEN:50,XYLEN:15,TCE:8,PCE:4};
+    const LABELS={CDMM:'카드뮴',COPPR:'구리',AS_:'비소',MRC:'수은',PB:'납',CR6:'6가크롬',ZINC:'아연',NICKEL:'니켈',IMCOW:'불소',TPH:'석유계탄화수소',BENZ:'벤젠',TOLUE:'톨루엔'};
+
+    // 최신 데이터 기준으로 초과 항목 체크
+    const latest=items.sort((a,b)=>+(b.EXAM_YR||0)-(+(a.EXAM_YR||0)))[0];
+    const exceedances=[];
+    const measured={};
+    for(const [k,std] of Object.entries(STD1)){
+      const v=parseFloat(latest[k]);
+      if(!isNaN(v)&&v>0){
+        measured[k]=v;
+        if(v>std) exceedances.push({name:LABELS[k]||k,value:v,std,ratio:+(v/std).toFixed(1)});
+      }
+    }
+
+    const examYr=latest.EXAM_YR||'—';
+    const chartrCl=latest.CHARTR_CL_NM||'—'; // 특성분류 (논/밭/도로변 등)
+    const contaminated=exceedances.length>0;
+    console.log('✅ 토양오염도 조회 성공 —',addrShort,'조사연도:',examYr,'초과항목:',exceedances.length);
+    return{
+      contaminated, exceedances, measured,
+      examYr, chartrCl, addr:addrShort,
+      totalItems:items.length,
+      source:`실제 (식품안전나라 토양실태조사 ${examYr}년)`, reliability:'real'
+    };
+  }catch(e){console.warn('토양오염도 실패:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
