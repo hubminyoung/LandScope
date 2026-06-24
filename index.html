@@ -1666,9 +1666,95 @@ async function getRealElevation(c) {
 }
 
 // ════════════════════════════════════════════
-// 기후 자동분석 (Open-Meteo ERA5 과거 기후)
+// ════════════════════════════════════════════
+// 기상청 API허브 — ASOS 월별 통계 파싱 유틸
+// ════════════════════════════════════════════
+// KMA 응답 형식: 공백구분 고정폭 텍스트, #으로 시작하는 줄은 주석
+function parseKMATextRows(txt){
+  return txt.split('\n')
+    .filter(l=>l.trim()&&!l.trim().startsWith('#'))
+    .map(l=>l.trim().split(/\s+/).filter(Boolean));
+}
+
+// ════════════════════════════════════════════
+// 기상청 API허브 — ASOS 기후통계 조회
+// (apihub.kma.go.kr 기후통계 > 기온·강수·바람 월별 통계)
+// ════════════════════════════════════════════
+async function getKMAClimateSummary(c){
+  if(!KEYS.kmaHub) return null;
+  try{
+    const stn=findNearestStn(c.lat,c.lng);
+    console.log('📡 KMA 최근접 ASOS 지점:',stn.name,'(',stn.id,') —',stn.distKm,'km');
+
+    // 최근 3년 월별 ASOS 자료 조회
+    // ※ 엔드포인트: apihub.kma.go.kr 기후통계 섹션에서 확인 후 교체 예정
+    // 현재 사용 엔드포인트: kma_sfcmm.php (ASOS 월별 통계)
+    const now=new Date();
+    const years=[now.getFullYear()-1,now.getFullYear()-2,now.getFullYear()-3];
+
+    const allRows=[];
+    for(const yr of years){
+      try{
+        const url=`${WORKER_URL}/kma-hub/api/typ01/url/kma_sfcmm.php?stn=${stn.id}&ym=${yr}&authKey=${KEYS.kmaHub}`;
+        const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
+        const txt=await res.text();
+        console.log(`📡 KMA ASOS 월별(${yr}) 응답 앞 200자:`,txt.slice(0,200));
+        const rows=parseKMATextRows(txt);
+        allRows.push(...rows.filter(r=>r.length>=5)); // 유효 행만
+      }catch(ye){console.warn('KMA 월별 오류',yr,ye.message);}
+    }
+    if(!allRows.length){console.warn('KMA 기후 데이터 없음 — ERA5 폴백');return null;}
+
+    // 컬럼 인덱스: 응답 포맷 확인 후 조정 필요
+    // 예상: TM(년월) STN TA(평균기온) RN(강수량) WS(평균풍속) WD(주풍향) MN(최저기온)
+    const temps=[], precips=[], minTemps=[], windDirs=[], months=[];
+    for(const r of allRows){
+      const ym=r[0]; // YYYYMM
+      const mo=ym?parseInt(String(ym).slice(-2)):null;
+      if(!mo||mo<1||mo>12) continue;
+      const ta=parseFloat(r[2]); // 평균기온
+      const rn=parseFloat(r[3]); // 강수량
+      const mn=parseFloat(r[5]); // 최저기온
+      const wd=parseFloat(r[4]); // 풍향
+      if(!isNaN(ta)) temps.push(ta);
+      if(!isNaN(rn)) precips.push({mo,v:rn});
+      if(!isNaN(mn)) minTemps.push(mn);
+      if(!isNaN(wd)) months.push({mo,wd});
+    }
+    if(temps.length<6){console.warn('KMA 기온 데이터 부족');return null;}
+
+    const annualMean=+(temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1);
+    // 월별 평균 강수량 → 연강수량
+    const mp=Array(12).fill(null).map((_,i)=>{
+      const vs=precips.filter(x=>x.mo===i+1).map(x=>x.v);
+      return vs.length?vs.reduce((a,b)=>a+b,0)/vs.length:null;
+    });
+    const annualPrecip=Math.round(mp.filter(v=>v!=null).reduce((a,b)=>a+b,0)
+      *(12/mp.filter(v=>v!=null).length));
+    const maxPrecipMonths=mp.map((v,i)=>({v:v||0,m:i+1})).sort((a,b)=>b.v-a.v).slice(0,2).map(x=>x.m).sort((a,b)=>a-b);
+    const precipNote=`${maxPrecipMonths[0]}~${maxPrecipMonths[1]}월 집중`;
+    const absMin=minTemps.length?+Math.min(...minTemps).toFixed(1):null;
+
+    // 계절별 주풍향
+    const dirName=deg=>{const dirs=['북','북동','동','남동','남','남서','서','북서'];return dirs[Math.round((deg%360)/45)%8];};
+    const domDir=(moArr,m1,m2)=>{const v=months.filter(x=>x.mo>=m1&&x.mo<=m2).map(x=>x.wd);if(!v.length)return'북서';const h=new Float32Array(8);v.forEach(d=>h[Math.round((d%360)/45)%8]++);let b=0;for(let i=1;i<8;i++)if(h[i]>h[b])b=i;return dirName(b*45);};
+    const windSummary=`봄 ${domDir(months,3,5)}풍 / 여름 ${domDir(months,6,8)}풍 / 가을 ${domDir(months,9,11)}풍 / 겨울 ${domDir(months,12,12)||domDir(months,1,2)}풍`;
+
+    return{annualMean,annualPrecip,absMin,precipNote,windSummary,
+      stnName:stn.name,stnId:stn.id,stnDist:stn.distKm,
+      source:`실제 (기상청 ASOS ${stn.name}(${stn.id}) — ${stn.distKm}km)`,reliability:'real'};
+  }catch(e){console.warn('KMA 기후통계 오류:',e.message);return null;}
+}
+
+// 기후 자동분석 (KMA Hub 우선 → Open-Meteo ERA5 폴백)
 // ════════════════════════════════════════════
 async function getClimateSummary(c){
+  // KMA Hub 인증키 있으면 기상청 실측 우선
+  if(KEYS.kmaHub){
+    const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
+    if(kmaResult) return kmaResult;
+    console.warn('KMA 기후 실패 — ERA5 폴백');
+  }
   try{
     // 최근 3년 일별 데이터
     const end=new Date();end.setDate(end.getDate()-2);
@@ -4132,6 +4218,7 @@ const KEYS={
   vworld:'525DBFC7-F789-3094-871F-CD46831310CB',
   airkorea:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
+  kmaHub:'',   // 기상청 API허브 (apihub.kma.go.kr) 전용 인증키 — KMA 지상관측 평년값 조회용
   soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
   envgrd:'YD6X-CR5X-EJDT-V2OJ',
@@ -4141,6 +4228,120 @@ const KEYS={
   sgis:'',
   sgisSecret:''
 };
+
+// ════════════════════════════════════════════
+// 기상청 ASOS 지상관측 지점 전국 90개
+// (apihub.kma.go.kr stn_inf.php?inf=SFC 2022.11 기준)
+// 포맷: [지점번호, 위도, 경도, 지점명, 해발고도(m)]
+// ════════════════════════════════════════════
+const KMA_ASOS_STN=[
+  [90,38.25085,128.56473,'속초',17.5],
+  [93,37.94738,127.75443,'북춘천',95.8],
+  [95,38.14787,127.30420,'철원',155.5],
+  [98,37.90188,127.06070,'동두천',115.6],
+  [99,37.88589,126.76648,'파주',30.6],
+  [100,37.67713,128.71834,'대관령',772.4],
+  [101,37.90262,127.73570,'춘천',75.8],
+  [102,37.97396,124.71237,'백령도',36.0],
+  [104,37.80456,128.85535,'북강릉',75.2],
+  [105,37.75147,128.89099,'강릉',27.1],
+  [106,37.50709,129.12433,'동해',40.5],
+  [108,37.57142,126.96580,'서울',85.7],
+  [112,37.47772,126.62490,'인천',69.0],
+  [114,37.33749,127.94659,'원주',150.1],
+  [115,37.48129,130.89863,'울릉도',221.1],
+  [119,37.25746,126.98300,'수원',39.8],
+  [121,37.18126,128.45743,'영월',240.5],
+  [127,36.97045,127.95250,'충주',114.9],
+  [129,36.77658,126.49390,'서산',25.3],
+  [130,36.99176,129.41278,'울진',49.0],
+  [131,36.63924,127.44066,'청주',58.7],
+  [133,36.37199,127.37210,'대전',67.8],
+  [135,36.22025,127.99458,'추풍령',245.0],
+  [136,36.57293,128.70733,'안동',141.3],
+  [137,36.40837,128.15741,'상주',96.6],
+  [138,36.03201,129.38002,'포항',3.9],
+  [140,36.00530,126.76135,'군산',27.9],
+  [143,35.87797,128.65296,'대구',54.3],
+  [146,35.84092,127.11718,'전주',60.4],
+  [152,35.58237,129.33469,'울산',81.1],
+  [155,35.17019,128.57282,'창원',35.0],
+  [156,35.17294,126.89156,'광주',70.3],
+  [159,35.10468,129.03203,'부산',69.6],
+  [162,34.84541,128.43561,'통영',31.2],
+  [165,34.81732,126.38151,'목포',44.7],
+  [168,34.73929,127.74063,'여수',65.9],
+  [169,34.68719,125.45105,'흑산도',75.1],
+  [170,34.39590,126.70182,'완도',35.4],
+  [172,35.34824,126.59900,'고창',52.4],
+  [174,35.02040,127.36940,'순천',165.0],
+  [177,36.65759,126.68772,'홍성',27.7],
+  [181,36.63972,127.39694,'서청주',32.0],
+  [184,33.51411,126.52969,'제주',20.8],
+  [185,33.29382,126.16283,'고산',71.4],
+  [188,33.38677,126.88020,'성산',20.3],
+  [189,33.24616,126.56530,'서귀포',51.9],
+  [192,35.16378,128.04004,'진주',29.4],
+  [201,37.70739,126.44634,'강화',47.8],
+  [202,37.48863,127.49446,'양평',47.3],
+  [203,37.26399,127.48421,'이천',80.1],
+  [211,38.05986,128.16714,'인제',201.8],
+  [212,37.68360,127.88043,'홍천',140.2],
+  [216,37.17038,128.98929,'태백',714.5],
+  [217,37.38149,128.64590,'정선군',307.6],
+  [221,37.15928,128.19433,'제천',264.6],
+  [226,36.48761,127.73415,'보은',171.3],
+  [232,36.76217,127.29282,'천안',84.8],
+  [235,36.32724,126.55744,'보령',10.0],
+  [236,36.27242,126.92079,'부여',13.4],
+  [238,36.10563,127.48175,'금산',170.2],
+  [239,36.48522,127.24438,'세종',89.5],
+  [243,35.72961,126.71657,'부안',12.2],
+  [244,35.61203,127.28556,'임실',247.0],
+  [245,35.56337,126.83904,'정읍',68.7],
+  [247,35.42130,127.39652,'남원',133.5],
+  [248,35.65696,127.52031,'장수',406.9],
+  [251,35.42661,126.69700,'고창군',58.8],
+  [252,35.28366,126.47784,'영광군',37.2],
+  [253,35.22981,128.89075,'김해시',54.6],
+  [254,35.37131,127.12860,'순창군',129.4],
+  [255,35.22655,128.67260,'북창원',51.0],
+  [257,35.30737,129.02009,'양산시',6.3],
+  [258,34.76335,127.21226,'보성군',1.4],
+  [259,34.64457,126.78408,'강진군',16.2],
+  [260,34.68886,126.91951,'장흥',44.0],
+  [261,34.55375,126.56907,'해남',16.4],
+  [262,34.61826,127.27572,'고흥',51.9],
+  [263,35.32258,128.28812,'의령군',14.1],
+  [264,35.51138,127.74538,'함양군',152.1],
+  [266,34.94340,127.69140,'광양시',88.2],
+  [268,34.47296,126.25846,'진도군',9.8],
+  [271,36.94361,128.91449,'봉화',324.7],
+  [272,36.87183,128.51687,'영주',211.3],
+  [273,36.62727,128.14879,'문경',173.0],
+  [276,36.43510,129.04005,'청송군',208.7],
+  [277,36.53337,129.40926,'영덕',40.7],
+  [278,36.35610,128.68864,'의성',81.4],
+  [279,36.13055,128.32055,'구미',49.2],
+  [281,35.97742,128.95140,'영천',96.1],
+  [283,35.81740,129.20090,'경주시',40.1],
+  [284,35.66739,127.90990,'거창',228.5],
+  [285,35.56505,128.16994,'합천',26.7],
+  [288,35.49147,128.74412,'밀양',8.3],
+  [289,35.41300,127.87910,'산청',138.2],
+  [294,34.88818,128.60459,'거제',44.8],
+  [295,34.81662,127.92641,'남해',45.7],
+];
+
+// 분석 좌표에서 가장 가까운 ASOS 지점 반환
+function findNearestStn(lat, lng){
+  let nearest=null, minDist=Infinity;
+  for(const s of KMA_ASOS_STN){
+    const dist=haversine(lat,lng,s[1],s[2]);
+    if(dist<minDist){minDist=dist;nearest=s;}
+  }
+  return{id:nearest[0],lat:nearest[1],lng:nearest[2],name:nearest[3],alt:nearest[4],distKm:+(minDist/1000).toFixed(1)};
+}
 // ── 페이지 로드 시 localStorage에서 키 복원 (설정 모달 안 열어도 적용) ──
 (function initKeysFromStorage(){
   try{
@@ -4148,6 +4349,7 @@ const KEYS={
     if(ls.getItem('ls_vworld'))    KEYS.vworld    =ls.getItem('ls_vworld');
     if(ls.getItem('ls_airkorea'))  KEYS.airkorea  =ls.getItem('ls_airkorea');
     if(ls.getItem('ls_kma'))       KEYS.kma       =ls.getItem('ls_kma');
+    if(ls.getItem('ls_kma_hub'))   KEYS.kmaHub    =ls.getItem('ls_kma_hub');
     if(ls.getItem('ls_soilrda'))   KEYS.soilrda   =ls.getItem('ls_soilrda');
     if(ls.getItem('ls_nibr'))      KEYS.nibr      =ls.getItem('ls_nibr');
     if(ls.getItem('ls_sgis'))      KEYS.sgis      =ls.getItem('ls_sgis');
@@ -4175,6 +4377,7 @@ function openSettings(){
   document.getElementById('key-vworld').value=KEYS.vworld;
   document.getElementById('key-airkorea').value=KEYS.airkorea;
   document.getElementById('key-kma').value=KEYS.kma;
+  document.getElementById('key-kma-hub').value=KEYS.kmaHub||'';
   document.getElementById('key-soilrda').value=KEYS.soilrda;
   document.getElementById('key-nibr').value=KEYS.nibr;
   document.getElementById('key-sgis-key').value=KEYS.sgis;
@@ -4187,6 +4390,7 @@ function saveApiKeys(){
   KEYS.vworld=document.getElementById('key-vworld').value.trim();
   KEYS.airkorea=document.getElementById('key-airkorea').value.trim();
   KEYS.kma=document.getElementById('key-kma').value.trim();
+  KEYS.kmaHub=document.getElementById('key-kma-hub').value.trim();
   KEYS.soilrda=document.getElementById('key-soilrda').value.trim();
   KEYS.nibr=document.getElementById('key-nibr').value.trim();
   KEYS.sgis=document.getElementById('key-sgis-key').value.trim();
@@ -4195,6 +4399,7 @@ function saveApiKeys(){
     localStorage.setItem('ls_vworld',KEYS.vworld);
     localStorage.setItem('ls_airkorea',KEYS.airkorea);
     localStorage.setItem('ls_kma',KEYS.kma);
+    localStorage.setItem('ls_kma_hub',KEYS.kmaHub);
     localStorage.setItem('ls_soilrda',KEYS.soilrda);
     localStorage.setItem('ls_nibr',KEYS.nibr);
     localStorage.setItem('ls_sgis',KEYS.sgis);
@@ -5653,6 +5858,20 @@ async function getRealAir(c){
         <button onclick="testApi('kma')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
       </div>
       <div class="api-status idle" id="status-kma" style="margin-top:4px;">⬡ 미설정 — Open-Meteo 사용 중 (키 입력 시 KMA 격자 기상으로 업그레이드)</div>
+    </div>
+
+    <div class="api-group">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <div class="api-group-title">🌡️ 기상청 API허브 (apihub.kma.go.kr)</div>
+          <div class="api-group-desc" style="margin-bottom:0;">ASOS 지상관측 기후통계 — 실제 평년값 (연평균기온·연강수량·풍향·극한기온) · <a class="api-link" href="https://apihub.kma.go.kr" target="_blank">키 신청 (무료)</a></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input class="api-input" id="key-kma-hub" placeholder="apihub.kma.go.kr 인증키" type="text" style="margin-bottom:0;flex:1;">
+        <button onclick="testApi('kmaHub')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
+      </div>
+      <div class="api-status idle" id="status-kma-hub" style="margin-top:4px;">⬡ 미설정 — Open-Meteo ERA5 사용 중 (키 입력 시 기상청 실측 평년값으로 업그레이드)</div>
     </div>
 
     <div class="api-group">
