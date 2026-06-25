@@ -438,9 +438,12 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         <label class="layer-item"><input type="checkbox" id="l-cadastral" onchange="toggleCadastral()"> 📐 지적편집도 (VWorld)</label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">베이스맵</div>
-        <label class="layer-item"><input type="radio" name="bm" value="osm" checked onchange="changeBM('osm')"> 지도</label>
+        <label class="layer-item"><input type="radio" name="bm" value="osm" checked onchange="changeBM('osm')"> 지도 (OSM)</label>
+        <label class="layer-item"><input type="radio" name="bm" value="vworld" onchange="changeBM('vworld')"> 지도 (브이월드) <span style="font-size:9px;color:#455a64">키 필요</span></label>
         <label class="layer-item"><input type="radio" name="bm" value="sat" onchange="changeBM('sat')"> 위성</label>
-        <label class="layer-item"><input type="radio" name="bm" value="topo" onchange="changeBM('topo')"> 지형</label>
+        <label class="layer-item"><input type="radio" name="bm" value="hybrid" onchange="changeBM('hybrid')"> 위성+지명</label>
+        <hr style="border-color:#1e3a4f;margin:4px 0;">
+        <label class="layer-item"><input type="checkbox" id="l-vworld-label" onchange="toggleVworldLabel(this.checked)"> 🏷️ 한글 지명 오버레이 <span style="font-size:9px;color:#455a64">키 필요</span></label>
       </div>
       <button class="map-btn" id="homeBtn" onclick="flyHome()" style="display:none;">🏠 위치로</button>
       <div id="pickHint" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#0288d1ee;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;pointer-events:none;z-index:2000;text-align:center;backdrop-filter:blur(4px);">
@@ -469,21 +472,41 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
 
 <script>
 // ════════════════════════════════════════════
+// Worker URL (전역 — 타일 레이어에서 사용)
+// ════════════════════════════════════════════
+const WORKER_URL='https://siteanl.younrake.workers.dev';
+
+// ════════════════════════════════════════════
 // 지도 초기화
 // ════════════════════════════════════════════
 const map = L.map('map').setView([36.5,127.5],7);
 const BM = {
-  osm: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',subdomains:'abcd',maxZoom:20}),
-  sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'© Esri',maxZoom:19}),
-  topo: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20})
+  osm:    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20}),
+  vworld: L.tileLayer(`${WORKER_URL}/vworld-base/{z}/{y}/{x}`,{attribution:'© 국토지리정보원 VWorld',maxZoom:19,tileSize:256}),
+  sat:    L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
+  hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
+  topo:   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20})
 };
+// VWorld 한글 지명 오버레이 (위성/OSM 위에 표시)
+let vworldLabelLayer=null;
+function toggleVworldLabel(on){
+  if(on){
+    if(!vworldLabelLayer) vworldLabelLayer=L.tileLayer(`${WORKER_URL}/vworld-hybrid/{z}/{y}/{x}`,{attribution:'© VWorld',maxZoom:19,tileSize:256,zIndex:500});
+    map.addLayer(vworldLabelLayer);
+  }else if(vworldLabelLayer){map.removeLayer(vworldLabelLayer);}
+}
 BM.osm.addTo(map);
 let curBuf=null, curMarker=null, subLG=null;
 let pendingCoords=null, pendingAddress=null, previewMarker=null;
 const markerIcon = L.icon({iconUrl:'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAzNiI+PHBhdGggZmlsbD0iIzAyODhkMSIgZD0iTTEyIDAgQzUuNCAwIDAgNS40IDAgMTIgYzAgOS41IDEyIDI0IDEyIDI0czEyLTE0LjUgMTItMjQgYzAtNi42IC01LjQtMTIgLTEyLTEyeiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjUiIGZpbGw9IiNmZmYiLz48L3N2Zz4=',iconSize:[24,36],iconAnchor:[12,36],popupAnchor:[0,-36]});
 
 function toggleLP(){document.getElementById('layerPanel').classList.toggle('open');}
-function changeBM(t){Object.values(BM).forEach(m=>map.removeLayer(m));BM[t].addTo(map);}
+function changeBM(t){
+  Object.values(BM).forEach(m=>map.removeLayer(m));
+  BM[t].addTo(map);
+  // 지명 오버레이는 위에 유지
+  if(vworldLabelLayer&&map.hasLayer(vworldLabelLayer)){map.removeLayer(vworldLabelLayer);map.addLayer(vworldLabelLayer);}
+}
 function toggleBuf(){curBuf&&(document.getElementById('l-buf').checked?map.addLayer(curBuf):map.removeLayer(curBuf));}
 function flyHome(){curMarker&&map.flyTo(curMarker.getLatLng(),15,{duration:1.2});}
 
@@ -652,6 +675,19 @@ function windTxt(d){
 }
 function scoreColor(v){return v>=80?'#4fc3f7':v>=60?'#81c784':v>=40?'#ffb74d':'#ef9a9a';}
 function badge(t,c){return`<span class="badge b-${c}">${t}</span>`;}
+// OSM 토지이용 → 피복 분류 (EGIS 미연동 시 대체 표시)
+function osmLcFromOsm(o){
+  const n=o.naturalPct||0, w=o.waterPct||0, imp=o.impervious||0, ag=o.artificialGreen||0;
+  let label, code;
+  if(n>60){code='400';label='산림·자연식생';}
+  else if(n>35){code='420';label='혼합수림·관목';}
+  else if(w>15){code='520';label='내륙수계·습지';}
+  else if(imp>65){code='110';label='시가화·건조지역';}
+  else if(imp>40){code='120';label='혼합시가화';}
+  else if(ag>30){code='230';label='도시녹지·공원';}
+  else{code='210';label='초지·경작지';}
+  return`${label} <span style="font-size:10px;color:#78909c">(OSM 토지이용 기반 추정, 코드 ${code})</span>`;
+}
 
 // 프리셋 제거 — general 고정
 const preset='general';
@@ -820,14 +856,8 @@ async function _doAnalysis(address, coords){
       status:elev.reliability==='real'?'real':'fail',
       verifyUrl:topoUrl,verifyLabel:'직접 조회'});
 
-    // ── 데이터 로그: 기상 ──
-    dataLog.push({category:'기후/기상',icon:'🌤️',api:'Open-Meteo (무료 기상 API)',
-      url:meteoUrl,note:`현재기상 + 과거 7일 + 향후 3일 예보 데이터 (서울/아시아 시간대)`,
-      values:weather.reliability==='high'
-        ?`기온 ${weather.temperature}°C / 체감 ${weather.feels_like}°C / 풍속 ${weather.wind_speed}m/s ${weather.wind_direction_text} / 습도 ${weather.humidity}% / 일조 ${weather.avg_sun}h/day`
-        :'실패 (시뮬레이션으로 대체)',
-      status:weather.reliability==='high'?'real':'fail',
-      verifyUrl:meteoUrl,verifyLabel:'직접 조회'});
+    // ── 데이터 로그: 기상 (내부 분석용 — 표시 없음) ──
+    // getWeather() 결과는 열섬·바람길 분석 로직에만 활용, UI 표시하지 않음
 
     document.getElementById('loadingStep').textContent=STEPS[2];
     const aqReal = await getRealAirQualityOAQ(coords);
@@ -996,18 +1026,7 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:'https://www.airkorea.or.kr/web/realSearch',verifyLabel:'에어코리아 실시간 확인'});
     }
 
-    // ── Open-Meteo 기상 (항상 시도, 키 불필요) ──
-    const kmaWeather = await getRealKMAWeather(coords);
-    if(kmaWeather){
-      Object.assign(weather, kmaWeather);
-      // 연강수량 실측값을 water 객체에 반영
-      if(kmaWeather.annualPrecip) water.annualPrecip = kmaWeather.annualPrecip;
-      const omUrl=`https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,wind_direction_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration&timezone=Asia/Seoul`;
-      dataLog.push({category:'기후/기상 (Open-Meteo)',icon:'🌦️',api:'Open-Meteo (ECMWF·무료·키 불필요)',
-        url:omUrl,note:`실시간 기상 + 과거 5년 연강수량 평균 — ECMWF ERA5 기반`,
-        values:`기온 ${kmaWeather.temperature}°C / 체감 ${kmaWeather.feels_like}°C / 풍속 ${kmaWeather.wind_speed}m/s ${kmaWeather.wind_direction_text} / 연강수량 ${kmaWeather.annualPrecip||'계산중'}mm`,
-        status:'real',verifyUrl:'https://open-meteo.com/',verifyLabel:'Open-Meteo 문서'});
-    }
+    // ── 날씨 실황 조회 제거 — 설계 분석에 불필요, KMAHUB 기후통계로 대체 ──
 
     // ── 흙토람 토양 V3 PNU 기반 (키 있을 때) ──
     const realSoil = await getRealSoilRDA(coords, address);
@@ -1196,6 +1215,8 @@ async function _doAnalysis(address, coords){
       getNIHHSHardiness(address)
     ]);
     const climateSummary=csResult.status==='fulfilled'?csResult.value:null;
+    // KMAHUB 기후통계의 연강수량으로 water 객체 보충 (실측 우선)
+    if(climateSummary?.annualPrecip) water.annualPrecip=climateSummary.annualPrecip;
     let nihHardiness=nihResult.status==='fulfilled'?nihResult.value:null;
     // absMin 있으면 시도 내 정확 구역 재매칭
     if(nihHardiness&&climateSummary?.absMin){
@@ -2022,7 +2043,7 @@ async function getNIHHSHardiness(address, absMinHint=null){
   try{
     const sido=extractSido(address);
     if(!sido) return null;
-    if(!AVAIL.kma&&!AVAIL.soilrda) return null;
+    if(!AVAIL.soilrda) return null;
     const url=`${WORKER_URL}/nihhs/hardyMap?시도명=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
     const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
     const text=await r.text();
@@ -2747,7 +2768,7 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   heatStrategies.push('정밀 열환경 분석 시 MRT 실측 또는 ENVI-met 수치 시뮬레이션 필요 (VDI 3787 참조)');
   indicators.push({
     key:'heat', icon:'🌡️', label:'도시열섬 취약성',
-    current:`기온 ${wx.temperature}°C · 불투수율 ${water.impRatio}%`,
+    current:`불투수율 ${water.impRatio}%`,
     standard:'정성 판단 (PET 정밀 분석은 MRT 실측 또는 ENVI-met 수치모델 필요)',
     status: heatStatus,
     judgment: heatStatus === 'good' ? '열섬 위험 낮음' : heatStatus === 'caution' ? '열섬 위험 주의' : '열섬 위험 높음',
@@ -3668,7 +3689,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- ③ 토지피복지도 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지피복지도 ──</div>
-        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.name} (코드: ${lc.code})`:badge('미조회 — 환경부 EGIS','grey')}</span></div>
+        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.name} (코드: ${lc.code})`:osmD?osmLcFromOsm(osmD):'<span style="color:#455a64;font-size:11px">—</span>'}</span></div>
         ${lc?.isWater?`<div style="font-size:11px;color:#4fc3f7;padding:2px 0">💧 수계 지역 — 수질보전 및 친수공간 계획 검토</div>`:''}
         ${lc?.isEco?`<div style="font-size:11px;color:#a5d6a7;padding:2px 0">🌿 녹지/산림 — 생태계 보전 또는 녹지 활용 가능</div>`:''}
         <div class="source-row">${lc?'● 실제 (환경부 EGIS WMS)':'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
@@ -3713,7 +3734,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">미연동</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
@@ -3754,7 +3775,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">미연동</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
@@ -3801,11 +3822,11 @@ function renderResults(d){
         ${soil.matrix&&soil.matrix!=='—'?`<div class="data-row"><span class="data-key">모암(모재)</span><span class="data-val">${soil.matrix}</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>
-        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25!=null?`${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}`:'<span style="color:#455a64;font-size:11px">— (Worker AIRKOREA_KEY 필요)</span>'}</span></div>
-        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal!=null?`${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}`:'<span style="color:#455a64;font-size:11px">— (Worker AIRKOREA_KEY 필요)</span>'}</span></div>
-        ${[...soil.implications,...(air.pm25!=null||air.noiseReal!=null?air.implications:[])].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <div class="source-row">${air.reliability==='real'?`● 실시간 (${air.source}${air.station?' · '+air.station:''})`:badge('에어코리아 미연동','grey')+' <span style="font-size:10px;color:#546e7a">Worker AIRKOREA_KEY 미설정</span>'}</div>
+        ${(air.pm25!=null||air.noiseReal!=null)?`<div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>`:''}
+        ${air.pm25!=null?`<div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}</span></div>`:''}
+        ${air.noiseReal!=null?`<div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}</span></div>`:''}
+        ${(air.pm25!=null||air.noiseReal!=null)?[...soil.implications,...air.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join(''):soil.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
+        ${air.reliability==='real'?`<div class="source-row">● 실시간 (${air.source}${air.station?' · '+air.station:''})</div>`:''}
         ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:''}
         <div class="source-row">⬡ ${soil.source}</div>
       </div>
@@ -4121,8 +4142,8 @@ async function downloadPDF(){
             <th style="padding:7px 10px;text-align:left">설계 활용</th>
           </tr>
           ${[
-            ['현재 기온',`${wx.temperature}°C (체감 ${wx.feels_like}°C)`,'수종 선택 기준'],
-            ['풍속/풍향',`${wx.wind_speed}m/s · ${wx.wind_direction_text}`,'바람길 설계'],
+            ...(cs?.annualMean!=null?[['연평균 기온',`${cs.annualMean}°C`,'수종 선택 기준']]:[]),
+            ...(cs?.windSummary?[['계절 주풍향',cs.windSummary,'바람길 설계']]:[]),
             ['생태자연도',eco.grade_text,'보전/개발 전략'],
             ['수목 피복률',`${eco.treeCov}%`,'녹화 목표 설정'],
             ['습지 존재',eco.hasWetland?'있음':'없음','수공간 활용 검토'],
@@ -4561,10 +4582,7 @@ function findNearestStn(lat, lng){
   return{id:nearest[0],lat:nearest[1],lng:nearest[2],name:nearest[3],alt:nearest[4],distKm:+(minDist/1000).toFixed(1)};
 }
 
-// Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
-const WORKER_URL='https://siteanl.younrake.workers.dev';
-// data.go.kr → Worker 라우트: /kma /soil-v2 /soil-v3 /airkorea /nibr /vworld-data
-// 추가 필요 라우트: /ecobank-wms (nie-ecobank.kr) /floodmap-wms (floodmap.go.kr) /gg-api (openapi.gg.go.kr)
+// WORKER_URL은 스크립트 최상단에 선언됨 (지도 초기화 섹션)
 
 // ════════════════════════════════════════════
 // 재시도 유틸 — 502/503/520/521/522/504 일시 오류 자동 재시도
@@ -4617,7 +4635,6 @@ function updateKeyStatus(){
   const setS=(id,ok,msgOk,msgNo)=>{const el=document.getElementById(id);if(!el)return;el.textContent=ok?msgOk:msgNo;el.className='api-status '+(ok?'ok':'idle');};
   setS('status-vworld',AVAIL.vworld,'✅ Worker 설정됨 — 법정 용도지역 실제값 사용','⬡ 미설정 — OSM 토지이용 사용 중');
   setS('status-airkorea',AVAIL.airkorea,'✅ Worker 설정됨 — 에어코리아 PM2.5/PM10 실시간','⬡ 미설정 — OpenAQ 사용 중');
-  setS('status-kma',AVAIL.kma,'✅ Worker 설정됨 — KMA 격자 기상 실측','⬡ 미설정 — Open-Meteo 사용 중');
   setS('status-kma-hub',AVAIL.kmaHub,'✅ Worker 설정됨 — 기상청 ASOS 실측 평년값 사용','⬡ 미설정 — Open-Meteo ERA5 사용 중');
   setS('status-soilrda',AVAIL.soilrda,'✅ Worker 설정됨 — 흙토람 실제 토양 데이터','⬡ 미설정 — 추정값 사용 중');
   setS('status-nibr',AVAIL.nibr,'✅ Worker 설정됨 — 국립생물자원관 서식종 실측','⬡ 미설정 — 추정값 사용 중');
@@ -4902,7 +4919,7 @@ async function fetchEcoGrade(pnu){
   if(!pnu||pnu.length<8) return null;
   try{
     const emdCd=pnu.substring(0,8);
-    if(!AVAIL.nibr&&!AVAIL.kma) return null;
+    if(!AVAIL.nibr) return null;
     const url=`${WORKER_URL}/ecomap/attr/getEcologyzmpAttr?numOfRows=20&pageNo=1&type=json&emdCd=${emdCd}`;
     const r=await fetch(url);
     const text=await r.text();
@@ -4931,190 +4948,8 @@ async function fetchEcoGrade(pnu){
   }catch(e){console.warn('생태자연도 조회 실패:',e.message);return null;}
 }
 
-// ════════════════════════════════════════════
-// 실제 API: 기상자료개방포털 (KMA) — 격자 기상
-// ════════════════════════════════════════════
-// Lambert 정각이중원뿔투영 → KMA 격자 변환
-function latLngToKMAGrid(lat, lon) {
-  const RE=6371.00877,GRID=5.0,SLAT1=30.0,SLAT2=60.0,OLON=126.0,OLAT=38.0,XO=43,YO=136;
-  const DEGRAD=Math.PI/180;
-  const re=RE/GRID;
-  const slat1=SLAT1*DEGRAD,slat2=SLAT2*DEGRAD,olon=OLON*DEGRAD,olat=OLAT*DEGRAD;
-  let sn=Math.tan(Math.PI*.25+slat2*.5)/Math.tan(Math.PI*.25+slat1*.5);
-  sn=Math.log(Math.cos(slat1)/Math.cos(slat2))/Math.log(sn);
-  let sf=Math.pow(Math.tan(Math.PI*.25+slat1*.5),sn)*Math.cos(slat1)/sn;
-  let ro=re*sf/Math.pow(Math.tan(Math.PI*.25+olat*.5),sn);
-  let ra=re*sf/Math.pow(Math.tan(Math.PI*.25+lat*DEGRAD*.5),sn);
-  let theta=lon*DEGRAD-olon;
-  if(theta>Math.PI)theta-=2*Math.PI;
-  if(theta<-Math.PI)theta+=2*Math.PI;
-  theta*=sn;
-  return{nx:Math.floor(ra*Math.sin(theta)+XO+.5),ny:Math.floor(ro-ra*Math.cos(theta)+YO+.5)};
-}
-
-async function getRealKMAWeather(c){
-  // KMA 우선 (localhost 등록 시 작동), 실패 시 Open-Meteo 폴백
-  const kma=await getRealKMAWeatherKMA(c);
-  if(kma){
-    // 연강수량은 Open-Meteo에서 별도 취득
-    try{
-      const now=new Date();const endY=now.getFullYear()-1;const startY=endY-4;
-      const urlH=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}&start_date=${startY}-01-01&end_date=${endY}-12-31&daily=precipitation_sum&timezone=Asia/Seoul`;
-      const rh=await fetch(urlH);const dh=await rh.json();
-      if(dh.daily?.precipitation_sum){
-        const td=dh.daily.precipitation_sum.length;
-        kma.annualPrecip=Math.round(dh.daily.precipitation_sum.reduce((a,v)=>a+(v||0),0)/(td/365));
-      }
-    }catch(_){}
-    kma.source='실제 (기상청 KMA + Open-Meteo 연강수량)';
-    return kma;
-  }
-  // Open-Meteo 폴백
-  try{
-    const wmoText={0:'맑음',1:'대체로 맑음',2:'구름 많음',3:'흐림',45:'안개',48:'안개',51:'이슬비',53:'이슬비',55:'이슬비',61:'비',63:'비',65:'강한비',71:'눈',73:'눈',75:'강한눈',80:'소나기',81:'소나기',82:'강한소나기',95:'뇌우',96:'뇌우',99:'뇌우'};
-
-    // 1) 현재 기상 + 오늘 예보
-    const urlCur=`https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,wind_direction_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration&timezone=Asia/Seoul&forecast_days=1`;
-    const r1=await fetch(urlCur);
-    const d1=await r1.json();
-    if(!d1.current) return null;
-    const cur=d1.current, daily=d1.daily||{};
-    const T=+(cur.temperature_2m||15).toFixed(1);
-    const feels=+(cur.apparent_temperature||T).toFixed(1);
-    const wcode=cur.weather_code||0;
-    const sky=wmoText[wcode]||'흐림';
-    const wdir=cur.wind_direction_10m||0;
-    const wsp=+(cur.wind_speed_10m||0).toFixed(1);
-    const tmax=+(daily.temperature_2m_max?.[0]||T+3).toFixed(1);
-    const tmin=+(daily.temperature_2m_min?.[0]||T-5).toFixed(1);
-    const prcp=+(daily.precipitation_sum?.[0]||0).toFixed(1);
-    const sun=daily.sunshine_duration?.[0]?+(daily.sunshine_duration[0]/3600).toFixed(1):6;
-
-    // 2) 연강수량 (과거 5년 평균)
-    let annualPrecip=1200; // 기본값
-    try{
-      const now=new Date();
-      const endY=now.getFullYear()-1;
-      const startY=endY-4;
-      const urlHist=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat}&longitude=${c.lng}&start_date=${startY}-01-01&end_date=${endY}-12-31&daily=precipitation_sum&timezone=Asia/Seoul`;
-      const r2=await fetch(urlHist);
-      const d2=await r2.json();
-      if(d2.daily?.precipitation_sum){
-        const totalDays=d2.daily.precipitation_sum.length;
-        const totalMm=d2.daily.precipitation_sum.reduce((a,v)=>a+(v||0),0);
-        annualPrecip=Math.round(totalMm/(totalDays/365));
-      }
-    }catch(e2){console.warn('Open-Meteo 연강수량 조회 실패, 기본값 사용');}
-
-    return{
-      temperature:T, feels_like:feels, humidity:cur.relative_humidity_2m||60,
-      wind_speed:wsp, wind_direction:wdir, wind_direction_text:windTxt(wdir),
-      precipitation:prcp, temp_max:tmax, temp_min:tmin,
-      avg_precip:prcp, avg_sun:sun, annualPrecip,
-      sky, source:'실제 (Open-Meteo 기상 · ECMWF 모델)', reliability:'real'
-    };
-  }catch(e){console.warn('Open-Meteo 오류:',e);return null;}
-}
-
-// KMA 단기예보 (기상청 data.go.kr)
-// 발표시각: 0200,0500,0800,1100,1400,1700,2000,2300 — 발표 후 10분 이후 호출 가능
-async function getRealKMAWeatherKMA(c){
-  if(!AVAIL.kma) return null;
-  try{
-    const now=new Date();
-    const pad=n=>String(n).padStart(2,'0');
-    const nowMin=now.getHours()*60+now.getMinutes();
-    // 각 발표시각(분)+10분 이후에 사용 가능
-    const hrs=[2,5,8,11,14,17,20,23];
-    const validMins=hrs.map(h=>h*60+10); // 130,310,490,...
-    const validIdx=validMins.filter(t=>t<=nowMin).length-1;
-
-    let baseDate,baseH;
-    if(validIdx<0){
-      // 오늘 첫 발표(02:10)도 안 됐으면 전날 23시
-      const yd=new Date(now); yd.setDate(yd.getDate()-1);
-      baseDate=`${yd.getFullYear()}${pad(yd.getMonth()+1)}${pad(yd.getDate())}`;
-      baseH=23;
-    }else{
-      baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
-      baseH=hrs[validIdx];
-    }
-    const baseTime=`${pad(baseH)}00`;
-    const {nx,ny}=latLngToKMAGrid(c.lat,c.lng);
-    // numOfRows=290: 발표당 최대 약 290개 (시간별 요소 × 예보시간)
-    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?pageNo=1&numOfRows=290&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
-    const r=await fetch(url);
-    const text=await r.text();
-    if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
-      console.warn('KMA API 키 미승인 — data.go.kr 활용신청 필요');
-      return null;
-    }
-    const d=JSON.parse(text);
-    const rc=d.response?.header?.resultCode;
-    if(rc!=='00'){
-      console.warn('KMA resultCode:',rc, d.response?.header?.resultMsg);
-      return null;
-    }
-    const items=d.response?.body?.items?.item||[];
-    if(!items.length) return null;
-
-    // 현재 시각과 가장 가까운 예보 시각 매칭
-    const todayStr=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
-    const curMins=now.getHours()*60+now.getMinutes();
-    const getNearestNow=(cat)=>{
-      const catItems=items.filter(x=>x.category===cat);
-      if(!catItems.length) return null;
-      // 오늘 날짜 중 현재 시각에 가장 가까운 것
-      let best=null,bestDiff=Infinity;
-      for(const it of catItems){
-        const fcstH=parseInt(it.fcstTime.substring(0,2));
-        const fcstMin=fcstH*60;
-        const diff=Math.abs(fcstMin-curMins);
-        if(it.fcstDate===todayStr&&diff<bestDiff){bestDiff=diff;best=it;}
-      }
-      if(!best) best=catItems[0]; // 오늘 데이터 없으면 첫번째
-      return isNaN(+best.fcstValue)?best.fcstValue:+best.fcstValue;
-    };
-    const getAny=(cat)=>{
-      const it=items.find(x=>x.category===cat);
-      return it?(isNaN(+it.fcstValue)?it.fcstValue:+it.fcstValue):null;
-    };
-
-    const TMP=getNearestNow('TMP');
-    const WSD=getNearestNow('WSD');
-    const REH=getNearestNow('REH');
-    const VEC=getNearestNow('VEC');
-    const PTY=getNearestNow('PTY');
-    const SKY=getNearestNow('SKY');
-    const POP=getNearestNow('POP');
-    // 일 최고/최저기온
-    const TMX=getAny('TMX');
-    const TMN=getAny('TMN');
-
-    if(TMP===null) return null;
-    const skyText={1:'맑음',3:'구름많음',4:'흐림'}[SKY]||'흐림';
-    const ptyText={0:'없음',1:'비',2:'비/눈',3:'눈',4:'소나기'}[PTY||0]||'없음';
-
-    return{
-      temperature:TMP,
-      feels_like:+(TMP-1.5).toFixed(1),
-      humidity:REH||60,
-      wind_speed:WSD||0,
-      wind_direction:VEC||0,
-      wind_direction_text:windTxt(VEC||0),
-      precipitation:PTY>0?1:0,
-      precipType:ptyText,
-      pop:POP||0,
-      temp_max:TMX!=null?TMX:TMP+3,
-      temp_min:TMN!=null?TMN:TMP-5,
-      avg_precip:PTY>0?2:0,
-      avg_sun:SKY===1?8:SKY===3?5:3,
-      sky:skyText,
-      source:`실제 (기상청 KMA 단기예보 · 격자(${nx},${ny}) · ${baseDate} ${baseTime} 발표)`,
-      reliability:'real'
-    };
-  }catch(e){console.warn('KMA API 오류:',e.message);return null;}
-}
+// KMA 단기예보 관련 코드 전량 제거됨 (2026-06)
+// 날씨 실황은 설계 분석에 불필요 — KMAHUB ASOS 기후통계로 대체
 
 // ════════════════════════════════════════════
 // 실제 API: 흙토람 V3 (RDA) — 토양특성 상세정보
@@ -5400,7 +5235,7 @@ async function getRealSpeciesNIBR(c){
 // 활용신청: 국토교통부_전국버스정류장정보 조회서비스 (1613000)
 // ════════════════════════════════════════════
 async function getRealBusStops(c){
-  if(!AVAIL.kma) return null; // 공공데이터포털 동일 키 사용
+  // data.go.kr KMA_KEY 공유 — 키 미설정 시 API 오류로 자연스럽게 null 반환
   try{
     // GPS 좌표 기반 반경 내 버스 정류장 조회
     const url=`${WORKER_URL}/bus-stop?numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
@@ -6000,13 +5835,6 @@ async function getRealAir(c){
       <div class="api-group-desc">PM2.5/PM10/O3/NO2 시도별 실시간 · Worker 변수: <code>AIRKOREA_KEY</code></div>
       <div class="api-status idle" id="status-airkorea">확인 중…</div>
       <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → AIRKOREA_KEY</div>
-    </div>
-
-    <div class="api-group">
-      <div class="api-group-title">🌦️ 기상자료개방포털 (KMA)</div>
-      <div class="api-group-desc">한국 5km 격자 단기예보 실측 · Worker 변수: <code>KMA_KEY</code></div>
-      <div class="api-status idle" id="status-kma">확인 중…</div>
-      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → KMA_KEY</div>
     </div>
 
     <div class="api-group">
