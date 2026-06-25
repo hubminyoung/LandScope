@@ -175,6 +175,11 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1923;color:#e0e6ed;heig
 .perf-badge-caution{font-size:9px;font-weight:700;background:#2a2a1a;color:#fff176;padding:2px 7px;border-radius:8px;white-space:nowrap;}
 .perf-badge-poor{font-size:9px;font-weight:700;background:#2a1a1a;color:#ef9a9a;padding:2px 7px;border-radius:8px;white-space:nowrap;}
 .perf-badge-unknown{font-size:9px;font-weight:700;background:#1a2332;color:#78909c;padding:2px 7px;border-radius:8px;white-space:nowrap;}
+/* 지도 마커 레이블 (Leaflet tooltip) */
+.map-label-sub{background:rgba(13,26,38,.92)!important;border:1px solid #e91e63!important;color:#f8bbd0!important;font-size:10px!important;font-weight:700!important;padding:2px 6px!important;border-radius:4px!important;white-space:nowrap!important;box-shadow:0 1px 4px #0008!important;}
+.map-label-eco{background:rgba(13,26,38,.92)!important;border:1px solid #27ae60!important;color:#a5d6a7!important;font-size:10px!important;font-weight:700!important;padding:2px 6px!important;border-radius:4px!important;white-space:nowrap!important;box-shadow:0 1px 4px #0008!important;}
+.map-label-species{background:rgba(13,26,38,.92)!important;border:1px solid #ff9800!important;color:#ffe082!important;font-size:10px!important;font-weight:700!important;padding:2px 6px!important;border-radius:4px!important;white-space:nowrap!important;box-shadow:0 1px 4px #0008!important;}
+.leaflet-tooltip.map-label-sub::before,.leaflet-tooltip.map-label-eco::before,.leaflet-tooltip.map-label-species::before{display:none!important;}
 .perf-ind-current{font-size:11px;color:#81d4fa;margin-bottom:2px;font-weight:600;}
 .perf-ind-standard{font-size:10px;color:#546e7a;margin-bottom:2px;line-height:1.4;}
 .perf-ind-judgment{font-size:10px;font-weight:700;margin-bottom:3px;}
@@ -430,6 +435,7 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
         <label class="layer-item"><input type="checkbox" id="l-eco" onchange="toggleEco()"> 🌿 생태 거점 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
         <label class="layer-item"><input type="checkbox" id="l-sub" onchange="toggleSub()"> 🚇 지하철역 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
         <label class="layer-item"><input type="checkbox" id="l-flood" onchange="toggleFlood()"> 💧 홍수 위험지 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
+        <label class="layer-item"><input type="checkbox" id="l-species" onchange="toggleSpecies()"> 🔴 서식종 마커 <span style="font-size:9px;color:#455a64">(분석 후 자동 표시)</span></label>
         <label class="layer-item"><input type="checkbox" id="l-heat" onchange="toggleHeat()"> 🌡️ 열지도 (도시열섬) <span style="font-size:9px;color:#455a64">(분석 후)</span></label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">📡 정부 GIS 오버레이 (WMS)</div>
@@ -496,7 +502,7 @@ const BM = {
   topo: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20})
 };
 BM.osm.addTo(map);
-let curBuf=null, curMarker=null, ecoLG=null, subLG=null, floodLG=null, heatLayer=null;
+let curBuf=null, curMarker=null, ecoLG=null, subLG=null, floodLG=null, heatLayer=null, speciesLG=null;
 let pendingCoords=null, pendingAddress=null, previewMarker=null;
 const markerIcon = L.icon({iconUrl:'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAzNiI+PHBhdGggZmlsbD0iIzAyODhkMSIgZD0iTTEyIDAgQzUuNCAwIDAgNS40IDAgMTIgYzAgOS41IDEyIDI0IDEyIDI0czEyLTE0LjUgMTItMjQgYzAtNi42IC01LjQtMTIgLTEyLTEyeiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjUiIGZpbGw9IiNmZmYiLz48L3N2Zz4=',iconSize:[24,36],iconAnchor:[12,36],popupAnchor:[0,-36]});
 
@@ -509,6 +515,7 @@ function toggleEco(){
   if(document.getElementById('l-eco').checked){
     ecoLG=L.layerGroup(ECO_NODES.map(n=>
       L.circleMarker([n.lat,n.lng],{radius:10,color:'#1e8449',fillColor:'#27ae60',fillOpacity:.7,weight:2})
+      .bindTooltip(n.name,{permanent:false,direction:'top',className:'map-label-eco',offset:[0,-4]})
       .bindPopup(`<b>${n.name}</b><br>생태자연도 ${n.grade}등급`)
     )).addTo(map);
   }else if(ecoLG){map.removeLayer(ecoLG);ecoLG=null;}
@@ -517,6 +524,7 @@ function toggleSub(){
   if(document.getElementById('l-sub').checked){
     subLG=L.layerGroup(SUBWAY.map(s=>
       L.circleMarker([s.lat,s.lng],{radius:7,color:'#e91e63',fillColor:'#f48fb1',fillOpacity:.8,weight:2})
+      .bindTooltip(s.name+'역',{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
       .bindPopup(`🚇 ${s.name}역`)
     )).addTo(map);
   }else if(subLG){map.removeLayer(subLG);subLG=null;}
@@ -528,6 +536,10 @@ function toggleFlood(){
       .bindPopup(`<b>${f.name}</b><br>홍수 위험도: ${f.risk}`)
     )).addTo(map);
   }else if(floodLG){map.removeLayer(floodLG);floodLG=null;}
+}
+function toggleSpecies(){
+  if(!speciesLG){return;} // 분석 전에는 데이터 없음
+  document.getElementById('l-species').checked?map.addLayer(speciesLG):map.removeLayer(speciesLG);
 }
 
 // ── 정부 WMS 오버레이 ──────────────────────────────────
@@ -571,15 +583,19 @@ function toggleLandcover(){
 
 function toggleCadastral(){
   if(document.getElementById('l-cadastral').checked){
-    // VWorld 지적편집도 WMS (국토정보지리원 — 필지 경계선)
-    cadastralLayer=L.tileLayer.wms(WORKER_URL+'/vworld-wms',{
-      layers:'lt_c_lscomd',
-      key:KEYS.vworld,
-      format:'image/png',transparent:true,
-      opacity:0.8,attribution:'© VWorld 지적편집도',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('📐 지적편집도 (VWorld)');
+    if(!AVAIL.vworld){
+      showWMSToast('⚠️ VWorld API 키 미설정 — Worker 환경변수 VWORLD_KEY 설정 필요');
+      setTimeout(()=>document.getElementById('l-cadastral').checked=false,100);
+      return;
+    }
+    // VWorld WMTS 지적편집도 — Worker 경유 (키 서버 보관)
+    cadastralLayer=L.tileLayer(
+      `${WORKER_URL}/vworld-cadastral/{z}/{y}/{x}`,
+      {maxZoom:19,opacity:0.85,tileSize:256,
+       attribution:'© 국토지리정보원 VWorld 지적편집도',
+       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
+    ).addTo(map);
+    showWMSToast('📐 지적편집도 (VWorld WMTS — 필지 경계)');
   }else if(cadastralLayer){map.removeLayer(cadastralLayer);cadastralLayer=null;}
 }
 
@@ -589,7 +605,6 @@ function toggleEcvam(){
     ecvamWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
       layers:'lt_c_enveval_res',format:'image/png',transparent:true,
       opacity:0.65,attribution:'© 국토환경성평가지도',
-      APIKEY:ECVAM_KEY,DOMAIN:ECVAM_DOMAIN,
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }).addTo(map);
     showWMSToast('🗺️ 환경성평가도 (국토부)');
@@ -600,7 +615,6 @@ function toggleEcozone(){
     ecozoneWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
       layers:'lt_c_ecscnsrvatn',format:'image/png',transparent:true,
       opacity:0.6,attribution:'© 환경부 생태보전지역',
-      APIKEY:ECVAM_KEY,DOMAIN:ECVAM_DOMAIN,
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }).addTo(map);
     showWMSToast('🦋 생태보전지역 (환경부)');
@@ -621,7 +635,6 @@ function toggleEcobank(type){
     const layer=L.tileLayer.wms(WORKER_URL+'/ecobank-wms',{
       layers:ECOBANK_LAYERS[type],format:'image/png',transparent:true,
       opacity:0.65,attribution:'© 국립생태원 에코뱅크',
-      APIKEY:KEYS.ecobank,
       errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
     }).addTo(map);
     ecobankWmsLayers[type]=layer;
@@ -687,10 +700,10 @@ map.on('click',async function(e){
   const addrField=document.getElementById('address');
   addrField.value=`위도 ${lat.toFixed(6)}, 경도 ${lng.toFixed(6)}`; // 기본값
   try{
-    if(KEYS.vworld){
-      // VWorld 역지오코딩 (지번 주소 우선) — JSONP 직접 호출
-      const revUrl=`https://api.vworld.kr/req/address?service=address&request=getaddress&type=BOTH&crs=epsg:4326&point=${lng},${lat}&format=json&key=${KEYS.vworld}`;
-      const d=await vworldJsonp(revUrl);
+    if(AVAIL.vworld){
+      // VWorld 역지오코딩 (지번 주소 우선) — Worker 경유 (키 서버 보관, 일반 fetch 사용)
+      const revUrl=`${WORKER_URL}/vworld-address?service=address&request=getaddress&type=BOTH&crs=epsg:4326&point=${lng},${lat}&format=json`;
+      const d=await fetch(revUrl,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
       if(d?.response?.status==='OK'){
         const items=Array.isArray(d.response.result)?d.response.result:[d.response.result];
         const parcel=items.find(i=>i.type==='parcel'||i.type==='PARCEL');
@@ -938,16 +951,6 @@ async function _doAnalysis(address, coords){
 
   try{
     dataLog=[];  // 매 분석마다 초기화
-    // 분석 시작 시 localStorage에서 키 재확인 (설정 저장 후 바로 분석할 때도 최신값 반영)
-    try{const ls=localStorage;
-      if(ls.getItem('ls_vworld'))    KEYS.vworld    =ls.getItem('ls_vworld');
-      if(ls.getItem('ls_sgis'))      KEYS.sgis      =ls.getItem('ls_sgis');
-      if(ls.getItem('ls_sgis_secret')) KEYS.sgisSecret=ls.getItem('ls_sgis_secret');
-      if(ls.getItem('ls_soilrda'))   KEYS.soilrda   =ls.getItem('ls_soilrda');
-      if(ls.getItem('ls_airkorea'))  KEYS.airkorea  =ls.getItem('ls_airkorea');
-      if(ls.getItem('ls_nibr'))      KEYS.nibr      =ls.getItem('ls_nibr');
-    }catch(e){}
-    console.log('🔑 분석 키 상태 — sgis:',KEYS.sgis?'✅':'❌','sgisSecret:',KEYS.sgisSecret?'✅':'❌','vworld:',KEYS.vworld?'✅':'❌');
     document.getElementById('loadingStep').textContent=STEPS[0];
     const radius = +document.getElementById('radius').value || 500;
 
@@ -1007,10 +1010,10 @@ async function _doAnalysis(address, coords){
         values:`PM2.5 ${aqReal.pm25}㎍/㎥ (${aqReal.pm25g}) / PM10 ${aqReal.pm10}㎍/㎥`,
         status:'real',verifyUrl:`https://explore.openaq.org/`,verifyLabel:'OpenAQ 탐색기'});
     }else{
-      dataLog.push({category:'대기질 (PM2.5)',icon:'💨',api:'OpenAQ v3',
-        url:openaqUrl,note:'측정소 미발견 또는 데이터 없음 — 시뮬레이션 데이터 사용',
-        values:'시뮬레이션 (위치·도심 거리 기반 추정)',status:'simulated',
-        verifyUrl:openaqUrl,verifyLabel:'직접 조회'});
+      dataLog.push({category:'대기질 (PM2.5)',icon:'💨',api:'OpenAQ v3 (CORS 제한)',
+        url:openaqUrl,note:'CORS 오류 또는 측정소 미발견 — 에어코리아 키 설정 시 실측 연동 가능',
+        values:'미연동 (에어코리아 키 설정 필요)',status:'fail',
+        verifyUrl:'https://www.airkorea.or.kr/',verifyLabel:'에어코리아 키 발급'});
     }
 
     document.getElementById('loadingStep').textContent=STEPS[3];
@@ -1143,11 +1146,13 @@ async function _doAnalysis(address, coords){
     let air=buildAir(coords, osm, aqReal);
     const realAir=await getRealAir(coords);
     if(realAir){
+      // 에어코리아 실측 최우선
       air={...air,pm25:realAir.pm25,pm10:realAir.pm10,pm25g:realAir.pm25g,station:realAir.station,source:realAir.source,reliability:realAir.reliability};
-    } else {
-      // 실측 대기질 없음 → 추정값 표시 안 함
+    } else if(!(aqReal&&aqReal.reliability==='real')){
+      // 에어코리아도 없고 OpenAQ도 실측 아님 → 추정값 표시 안 함
       air.pm25=null; air.pm10=null; air.pm25g=null; air.reliability='none';
     }
+    // (aqReal 실측 성공 시 buildAir에서 이미 pm25 설정, 그대로 유지)
     // 소음: 실측(환경부 소음측정망)이 있을 때만 표시 — 없으면 null
     air.noiseReal = realNoise ? realNoise.noise : null;
     air.noiseRealg = realNoise ? realNoise.noiseg : null;
@@ -1483,10 +1488,10 @@ async function geocode(address){
     }
 
     // 1c) 지번이면 VWorld PARCEL 우선 시도 (Kakao보다 지번 정확도 높음)
-    if(isJibun&&KEYS.vworld){
+    if(isJibun&&AVAIL.vworld){
       try{
-        const url=`https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(addr)}&refine=true&simple=false&format=json&type=PARCEL&key=${KEYS.vworld}`;
-        const d=await vworldJsonp(url);
+        const url=`${WORKER_URL}/vworld-address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(addr)}&refine=true&simple=false&format=json&type=PARCEL`;
+        const d=await fetch(url,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
         if(d.response&&d.response.status==='OK'&&d.response.result){
           const pt=d.response.result.point;
           const lng=parseFloat(pt.x),lat=parseFloat(pt.y);
@@ -1520,12 +1525,12 @@ async function geocode(address){
     console.warn('카카오 SDK 미로드 — VWorld/Nominatim 사용');
   }
 
-  // ── 2) VWorld JSONP (지번 특화, 카카오 실패 시 최종 시도) ──
-  if(KEYS.vworld){
+  // ── 2) VWorld Worker 지오코딩 (지번 특화, 카카오 실패 시 최종 시도) ──
+  if(AVAIL.vworld){
     for(const type of ['PARCEL','ROAD']){
       try{
-        const url=`https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(addr)}&refine=true&simple=false&format=json&type=${type}&key=${KEYS.vworld}`;
-        const d=await vworldJsonp(url);
+        const url=`${WORKER_URL}/vworld-address?service=address&request=getcoord&version=2.0&crs=epsg:4326&address=${encodeURIComponent(addr)}&refine=true&simple=false&format=json&type=${type}`;
+        const d=await fetch(url,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
         if(d.response&&d.response.status==='OK'&&d.response.result){
           const pt=d.response.result.point;
           const lng=parseFloat(pt.x),lat=parseFloat(pt.y);
@@ -1777,7 +1782,7 @@ function parseKMATextRows(txt){
 // (apihub.kma.go.kr 기후통계 > 기온·강수·바람 월별 통계)
 // ════════════════════════════════════════════
 async function getKMAClimateSummary(c){
-  if(!KEYS.kmaHub) return null;
+  if(!AVAIL.kmaHub) return null;
   try{
     const stn=findNearestStn(c.lat,c.lng);
     console.log('📡 KMA 최근접 ASOS 지점:',stn.name,'(',stn.id,') —',stn.distKm,'km');
@@ -1789,7 +1794,7 @@ async function getKMAClimateSummary(c){
     const endYm=endYr*100+12;                 // 202512
     const startYm=startYr*100+1;              // 202301
 
-    const auth=`&help=0&disp=0&authKey=${KEYS.kmaHub}`;
+    const auth=`&help=0&disp=0`;
     const stnParam=`&stn_id=${stn.id}`;
     const base=`${WORKER_URL}/kma-hub/api/typ01/url`;
 
@@ -2030,7 +2035,7 @@ async function getKMAClimateSummary(c){
 async function getClimateSummary(c){
   const isKorea=c.lat>=33&&c.lat<=39&&c.lng>=124&&c.lng<=132;
   // 한국: 기상청 ASOS 우선, 실패 시 ERA5 폴백
-  if(isKorea&&KEYS.kmaHub){
+  if(isKorea&&AVAIL.kmaHub){
     const kmaResult=await getKMAClimateSummary(c).catch(()=>null);
     if(kmaResult) return kmaResult;
     console.warn('KMA 기후 실패 — ERA5 폴백 사용');
@@ -2196,10 +2201,8 @@ async function getNIHHSHardiness(address, absMinHint=null){
   try{
     const sido=extractSido(address);
     if(!sido) return null;
-    const keyRaw=KEYS.kma||KEYS.soilrda||'';
-    if(!keyRaw) return null;
-    const key=encodeURIComponent(keyRaw);
-    const url=`${WORKER_URL}/nihhs/hardyMap?serviceKey=${key}&시도명=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
+    if(!AVAIL.kma&&!AVAIL.soilrda) return null;
+    const url=`${WORKER_URL}/nihhs/hardyMap?시도명=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
     const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
     const text=await r.text();
     if(!text||!text.includes('<item>')) return null;
@@ -3589,10 +3592,41 @@ function updateMap(d){
   const {lat,lng}=d.coords, r=d.radius;
   if(curMarker)map.removeLayer(curMarker);
   if(curBuf)map.removeLayer(curBuf);
+  // 이전 서식종 레이어 제거
+  if(speciesLG){map.removeLayer(speciesLG);speciesLG=null;}
+
   curBuf=L.circle([lat,lng],{radius:r,color:'#4fc3f7',fillColor:'#4fc3f7',fillOpacity:.07,weight:2,dashArray:'6,4'}).addTo(map);
   curMarker=L.marker([lat,lng],{icon:markerIcon}).addTo(map)
     .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:160px;"><b style="color:#0288d1">📍 분석 지점</b><br><small>${d.coords.name}</small><br><br><b>종합 점수: ${d.analysis.overall}점</b><br><small>권장: ${d.analysis.rec}</small></div>`)
     .openPopup();
+
+  // ── 서식종 마커 (NIBR/경기도 실측 데이터) ──────────────
+  const realSpecies=(d.ecology&&d.ecology.species?d.ecology.species:[]).filter(s=>!s.simulated);
+  if(realSpecies.length>0){
+    const markers=realSpecies.map((s,i)=>{
+      // 분석 중심 기준 방사형 80m 반경에 균등 배치
+      const angle=(i/realSpecies.length)*Math.PI*2;
+      const offsetM=80;
+      const dLat=offsetM/111320;
+      const dLng=offsetM/(111320*Math.cos(lat*Math.PI/180));
+      const sLat=lat+dLat*Math.sin(angle);
+      const sLng=lng+dLng*Math.cos(angle);
+      const riskColor=s.risk==='critical'?'#ef5350':s.risk==='high'?'#ff9800':'#66bb6a';
+      return L.circleMarker([sLat,sLng],{
+        radius:9,color:riskColor,fillColor:riskColor,fillOpacity:.85,weight:2
+      })
+      .bindTooltip(`${s.icon||'🔴'} ${s.name}`,{permanent:false,direction:'top',className:'map-label-species',offset:[0,-4]})
+      .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:140px"><b>${s.icon||'🔴'} ${s.name}</b><br><span style="color:#ff9800;font-size:11px">${s.status}</span><br><small style="color:#78909c">NIBR 실측 서식 확인</small></div>`);
+    });
+    speciesLG=L.layerGroup(markers).addTo(map);
+    // 체크박스 동기화
+    const cb=document.getElementById('l-species');
+    if(cb)cb.checked=true;
+  }else{
+    const cb=document.getElementById('l-species');
+    if(cb)cb.checked=false;
+  }
+
   map.flyTo([lat,lng],15,{duration:1.5});
   document.getElementById('homeBtn').style.display='block';
 }
@@ -4653,22 +4687,8 @@ let dataLog=[];
 // ════════════════════════════════════════════
 // API 키 설정 모달
 // ════════════════════════════════════════════
-const KEYS={
-  vworld:'525DBFC7-F789-3094-871F-CD46831310CB',
-  airkorea:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  kma:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  kmaHub:'YbuUmn_jToC7lJp_496ASw',   // 기상청 API허브 (apihub.kma.go.kr) 전용 인증키 — KMA 지상관측 평년값 조회용
-  soilrda:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  nibr:'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c',
-  envgrd:'YD6X-CR5X-EJDT-V2OJ',
-  flood:'2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef',
-  ecobank:'R40K8VWM6J89X8889E7J8OQQSJ5OKJF832B64272',
-  gyeonggi:'f195170eba6849b1a7ebf5d594e20346',
-  sgis:'06597bea25f14d129211',         // 통계청 SGIS consumer_key
-  sgisSecret:'e9d00ead80e84464b936',    // 통계청 SGIS consumer_secret
-  groundwater:'ef358cd35c6fb75cf6fd9871eb4b8eb5167fe146834671c1ea7988e9dbf572',  // 국가지하수정보시스템
-  soilContam:'5e37be4b27d44cbc851b'  // 식품안전나라 토양실태조사(I2390) — 토양오염도
-};
+// API 가용성 — Cloudflare Worker /keys-status 로부터 초기화
+let AVAIL = {};
 
 // ════════════════════════════════════════════
 // 기상청 ASOS 지상관측 지점 전국 90개
@@ -4783,25 +4803,9 @@ function findNearestStn(lat, lng){
   }
   return{id:nearest[0],lat:nearest[1],lng:nearest[2],name:nearest[3],alt:nearest[4],distKm:+(minDist/1000).toFixed(1)};
 }
-// ── 페이지 로드 시 localStorage에서 키 복원 (설정 모달 안 열어도 적용) ──
-(function initKeysFromStorage(){
-  try{
-    const ls=localStorage;
-    if(ls.getItem('ls_vworld'))    KEYS.vworld    =ls.getItem('ls_vworld');
-    if(ls.getItem('ls_airkorea'))  KEYS.airkorea  =ls.getItem('ls_airkorea');
-    if(ls.getItem('ls_kma'))       KEYS.kma       =ls.getItem('ls_kma');
-    if(ls.getItem('ls_kma_hub'))   KEYS.kmaHub    =ls.getItem('ls_kma_hub');
-    if(ls.getItem('ls_soilrda'))   KEYS.soilrda   =ls.getItem('ls_soilrda');
-    if(ls.getItem('ls_nibr'))      KEYS.nibr      =ls.getItem('ls_nibr');
-    if(ls.getItem('ls_sgis'))      KEYS.sgis      =ls.getItem('ls_sgis');
-    if(ls.getItem('ls_sgis_secret')) KEYS.sgisSecret=ls.getItem('ls_sgis_secret');
-  }catch(e){}
-})();
 
 // Cloudflare Worker (CORS 프록시) — data.go.kr/ECVAM/환경부 EGIS 우회
-const WORKER_URL='https://weathered-bar-2c29.younrake.workers.dev';
-const ECVAM_KEY=KEYS.envgrd; // YD6X-CR5X-EJDT-V2OJ
-const ECVAM_DOMAIN='hubminyoung.github.io';
+const WORKER_URL='https://siteanl.younrake.workers.dev';
 // data.go.kr → Worker 라우트: /kma /soil-v2 /soil-v3 /airkorea /nibr /vworld-data
 // 추가 필요 라우트: /ecobank-wms (nie-ecobank.kr) /floodmap-wms (floodmap.go.kr) /gg-api (openapi.gg.go.kr)
 
@@ -4833,76 +4837,45 @@ async function fetchWithRetry(url, options={}, retries=2, baseDelay=1200){
   }
 }
 
-function openSettings(){
+// ── Worker 키 상태 초기화 ──────────────────────────────────
+async function fetchKeysStatus(){
   try{
-    KEYS.vworld=localStorage.getItem('ls_vworld')||'525DBFC7-F789-3094-871F-CD46831310CB';
-    KEYS.airkorea=localStorage.getItem('ls_airkorea')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-    KEYS.kma=localStorage.getItem('ls_kma')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-    KEYS.soilrda=localStorage.getItem('ls_soilrda')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-    KEYS.nibr=localStorage.getItem('ls_nibr')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-    KEYS.sgis=localStorage.getItem('ls_sgis')||'06597bea25f14d129211';
-    KEYS.sgisSecret=localStorage.getItem('ls_sgis_secret')||'e9d00ead80e84464b936';
-  }catch(e){}
-  document.getElementById('key-vworld').value=KEYS.vworld;
-  document.getElementById('key-airkorea').value=KEYS.airkorea;
-  document.getElementById('key-kma').value=KEYS.kma;
-  document.getElementById('key-kma-hub').value=KEYS.kmaHub||'';
-  document.getElementById('key-soilrda').value=KEYS.soilrda;
-  document.getElementById('key-nibr').value=KEYS.nibr;
-  document.getElementById('key-sgis-key').value=KEYS.sgis;
-  document.getElementById('key-sgis-secret').value=KEYS.sgisSecret;
+    const r=await fetch(WORKER_URL+'/keys-status',{signal:AbortSignal.timeout(8000)});
+    if(r.ok) AVAIL=await r.json();
+    console.log('🔑 Worker 키 상태:',Object.entries(AVAIL).filter(([,v])=>v).map(([k])=>k).join(', ')||'없음');
+  }catch(e){
+    console.warn('Worker /keys-status 실패 (Worker 업데이트 필요):',e.message);
+  }
   updateKeyStatus();
+}
+// 앱 시작 시 키 상태 조회
+fetchKeysStatus();
+
+function openSettings(){
+  fetchKeysStatus().then(()=>updateKeyStatus());
   document.getElementById('settingsModal').classList.add('open');
 }
 function closeSettings(){document.getElementById('settingsModal').classList.remove('open');}
-function saveApiKeys(){
-  KEYS.vworld=document.getElementById('key-vworld').value.trim();
-  KEYS.airkorea=document.getElementById('key-airkorea').value.trim();
-  KEYS.kma=document.getElementById('key-kma').value.trim();
-  KEYS.kmaHub=document.getElementById('key-kma-hub').value.trim();
-  KEYS.soilrda=document.getElementById('key-soilrda').value.trim();
-  KEYS.nibr=document.getElementById('key-nibr').value.trim();
-  KEYS.sgis=document.getElementById('key-sgis-key').value.trim();
-  KEYS.sgisSecret=document.getElementById('key-sgis-secret').value.trim();
-  try{
-    localStorage.setItem('ls_vworld',KEYS.vworld);
-    localStorage.setItem('ls_airkorea',KEYS.airkorea);
-    localStorage.setItem('ls_kma',KEYS.kma);
-    localStorage.setItem('ls_kma_hub',KEYS.kmaHub);
-    localStorage.setItem('ls_soilrda',KEYS.soilrda);
-    localStorage.setItem('ls_nibr',KEYS.nibr);
-    localStorage.setItem('ls_sgis',KEYS.sgis);
-    localStorage.setItem('ls_sgis_secret',KEYS.sgisSecret);
-  }catch(e){}
-  updateKeyStatus();
-  closeSettings();
-  const toast=document.createElement('div');
-  toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e8449;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;z-index:9999;pointer-events:none;transition:opacity .4s;font-family:"Noto Sans KR",sans-serif;';
-  const paidN=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis&&KEYS.sgisSecret].filter(Boolean).length;
-  toast.textContent=`✅ 저장됨 — ${4+paidN}/12개 API 연결`;
-  document.body.appendChild(toast);
-  setTimeout(()=>{toast.style.opacity='0';setTimeout(()=>document.body.removeChild(toast),400);},2000);
-}
 function updateKeyStatus(){
   const setS=(id,ok,msgOk,msgNo)=>{const el=document.getElementById(id);if(!el)return;el.textContent=ok?msgOk:msgNo;el.className='api-status '+(ok?'ok':'idle');};
-  setS('status-vworld',KEYS.vworld,'✅ 키 설정됨 — 법정 용도지역 실제값 사용','⬡ 미설정 — OSM 토지이용 사용 중');
-  setS('status-airkorea',KEYS.airkorea,'✅ 키 설정됨 — 에어코리아 PM2.5/PM10 실시간','⬡ 미설정 — OpenAQ 사용 중');
-  setS('status-kma',KEYS.kma,'✅ 키 설정됨 — KMA 격자 기상 실측','⬡ 미설정 — Open-Meteo 사용 중');
-  setS('status-kma-hub',KEYS.kmaHub,'✅ 키 설정됨 — 기상청 ASOS 실측 평년값 사용 (ERA5 대체)','⬡ 미설정 — Open-Meteo ERA5 사용 중 (키 입력 시 기상청 실측 평년값으로 업그레이드)');
-  setS('status-soilrda',KEYS.soilrda,'✅ 키 설정됨 — 흙토람 실제 토양 데이터','⬡ 미설정 — 시뮬레이션 사용 중');
-  setS('status-nibr',KEYS.nibr,'✅ 키 설정됨 — 국립생물자원관 서식종 실측','⬡ 미설정 — 시뮬레이션 사용 중');
+  setS('status-vworld',AVAIL.vworld,'✅ Worker 설정됨 — 법정 용도지역 실제값 사용','⬡ 미설정 — OSM 토지이용 사용 중');
+  setS('status-airkorea',AVAIL.airkorea,'✅ Worker 설정됨 — 에어코리아 PM2.5/PM10 실시간','⬡ 미설정 — OpenAQ 사용 중');
+  setS('status-kma',AVAIL.kma,'✅ Worker 설정됨 — KMA 격자 기상 실측','⬡ 미설정 — Open-Meteo 사용 중');
+  setS('status-kma-hub',AVAIL.kmaHub,'✅ Worker 설정됨 — 기상청 ASOS 실측 평년값 사용','⬡ 미설정 — Open-Meteo ERA5 사용 중');
+  setS('status-soilrda',AVAIL.soilrda,'✅ Worker 설정됨 — 흙토람 실제 토양 데이터','⬡ 미설정 — 추정값 사용 중');
+  setS('status-nibr',AVAIL.nibr,'✅ Worker 설정됨 — 국립생물자원관 서식종 실측','⬡ 미설정 — 추정값 사용 중');
   updateHeaderApiCount();
 }
 
 function updateHeaderApiCount(){
   const el=document.getElementById('apiConnCount');
   if(!el)return;
-  const freeCount=4; // OSM, OpenAQ, Open-Meteo, Open-Meteo ERA5
-  const paidCount=[KEYS.vworld,KEYS.airkorea,KEYS.kma,KEYS.kmaHub,KEYS.soilrda,KEYS.nibr,KEYS.ecobank,KEYS.gyeonggi,KEYS.sgis].filter(Boolean).length;
+  const freeCount=4;
+  const paidCount=Object.values(AVAIL).filter(Boolean).length;
   const total=freeCount+paidCount;
-  const max=12;
+  const max=18;
   el.textContent=`${total}/${max} 연결`;
-  el.style.background=paidCount>=5?'#1e8449':paidCount>=3?'#0288d1':paidCount>=1?'#0277bd':'#1e3a4f';
+  el.style.background=paidCount>=8?'#1e8449':paidCount>=4?'#0288d1':paidCount>=1?'#0277bd':'#1e3a4f';
   el.style.color=paidCount>0?'white':'#90a4ae';
 }
 
@@ -4935,239 +4908,18 @@ async function testApi(type){
       setStatus('test-openaq-status',`<div style="color:#81c784">✅ 측정소 ${cnt}개 발견</div><button onclick="testApi('openaq')" style="margin-top:4px;background:#1e3a4f;border:none;border-radius:4px;padding:2px 8px;color:#90a4ae;font-size:10px;cursor:pointer;">재테스트</button>`,'#81c784');
     }catch(e){setStatus('test-openaq-status','<div style="color:#ef9a9a">❌ 연결 실패</div>','#ef9a9a');}
   }
-  else if(type==='kma'){
-    const key=document.getElementById('key-kma').value.trim();
-    if(!key){document.getElementById('status-kma').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-kma').textContent='⏳ 연결 테스트 중…';document.getElementById('status-kma').className='api-status idle';
-    try{
-      const now=new Date();const pad=n=>String(n).padStart(2,'0');
-      // 동적 base_time: 발표 후 10분 이후 시각 기준
-      const hrs=[2,5,8,11,14,17,20,23];
-      const nowMin=now.getHours()*60+now.getMinutes();
-      const validIdx=hrs.map(h=>h*60+10).filter(t=>t<=nowMin).length-1;
-      let baseDate,baseH;
-      if(validIdx<0){const yd=new Date(now);yd.setDate(yd.getDate()-1);baseDate=`${yd.getFullYear()}${pad(yd.getMonth()+1)}${pad(yd.getDate())}`;baseH=23;}
-      else{baseDate=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;baseH=hrs[validIdx];}
-      const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${k}&pageNo=1&numOfRows=10&dataType=JSON&base_date=${baseDate}&base_time=${pad(baseH)}00&nx=61&ny=126`;
-      const r=await fetch(url);const text=await r.text();
-      if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
-        document.getElementById('status-kma').textContent='❌ API 키 미승인 — data.go.kr에서 기상자료개방포털 활용신청 필요';
-        document.getElementById('status-kma').className='api-status err';
-        document.getElementById('test-kma-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
-        return;
-      }
-      const d=JSON.parse(text);
-      if(d.response?.header?.resultCode==='00'){
-        const t=d.response?.body?.items?.item?.find(x=>x.category==='TMP'||x.category==='T1H');
-        document.getElementById('status-kma').textContent=`✅ 연결 성공 — 서울 기온: ${t?t.fcstValue+'°C':'조회됨'}`;
-        document.getElementById('status-kma').className='api-status ok';
-        document.getElementById('test-kma-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        document.getElementById('status-kma').textContent='❌ 응답 오류: '+d.response?.header?.resultMsg;
-        document.getElementById('status-kma').className='api-status err';
-        document.getElementById('test-kma-status').innerHTML='<span style="color:#ef9a9a">❌ 키 오류</span>';
-      }
-    }catch(e){document.getElementById('status-kma').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-kma').className='api-status err';}
-  }
-  else if(type==='kmaHub'){
-    const key=document.getElementById('key-kma-hub').value.trim();
-    if(!key){document.getElementById('status-kma-hub').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-kma-hub').textContent='⏳ 연결 테스트 중 (기온 연자료 조회)…';document.getElementById('status-kma-hub').className='api-status idle';
-    try{
-      const now=new Date();
-      const yr=now.getFullYear()-1; // 직전 완전한 연도
-      // 서울(108) 기온 연자료 테스트
-      const url=`${WORKER_URL}/kma-hub/api/typ01/url/sts_ta.php?tm1=${yr}&tm2=${yr}&stn_id=108&help=0&disp=0&authKey=${encodeURIComponent(key)}`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(12000)});
-      const txt=await r.text();
-      console.log('🔍 KMA Hub 테스트 응답 앞 400자:',txt.slice(0,400));
-      if(txt.includes('UNAUTHORIZED')||txt.includes('401')||txt.includes('Invalid')||txt.includes('인증')){
-        document.getElementById('status-kma-hub').textContent='❌ 인증 실패 — apihub.kma.go.kr에서 기후통계 API 활용신청 + 키 확인 필요';
-        document.getElementById('status-kma-hub').className='api-status err';return;
-      }
-      // # 로 시작하지 않는 데이터 행 추출
-      const dataLines=txt.split('\n').filter(l=>l.trim()&&!l.trim().startsWith('#'));
-      if(dataLines.length===0){
-        document.getElementById('status-kma-hub').textContent=`⚠️ 응답 수신했으나 데이터 없음 — API 활용신청 확인 필요\n앞 200자: ${txt.slice(0,200)}`;
-        document.getElementById('status-kma-hub').className='api-status err';return;
-      }
-      const cols=dataLines[0].trim().split(/\s+/);
-      // col[6]=TA_YAVG (연평균기온)
-      const taAvg=cols[6]!==undefined?parseFloat(cols[6]):NaN;
-      const stnId=cols[1]||'?';
-      document.getElementById('status-kma-hub').textContent=`✅ 연결 성공 — 서울(${stnId}) ${yr}년 연평균기온: ${isNaN(taAvg)?'조회됨':taAvg+'°C'} · 기상청 ASOS 실측값 사용 가능`;
-      document.getElementById('status-kma-hub').className='api-status ok';
-    }catch(e){document.getElementById('status-kma-hub').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-kma-hub').className='api-status err';}
-  }
-  else if(type==='soilrda'){
-    const key=document.getElementById('key-soilrda').value.trim();
-    if(!key){document.getElementById('status-soilrda').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-soilrda').textContent='⏳ 연결 테스트 중…';document.getElementById('status-soilrda').className='api-status idle';
-    try{
-      const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/soil-v2?serviceKey=${k}&numOfRows=3&pageNo=1&address=${encodeURIComponent('경기도 양평군 양서면')}`;
-      const r=await fetch(url);const text=await r.text();
-      // data.go.kr 공통 에러 패턴 (공백/언더바 양쪽 모두 체크)
-      const isAuthErr=text.includes('SERVICE_KEY')||text.includes('SERVICE KEY')||
-        text.includes('REGISTERED ERROR')||text.includes('Unexpected')||
-        text.includes('APPLICATION_KEY')||text.includes('returnAuthMsg');
-      if(isAuthErr){
-        document.getElementById('status-soilrda').textContent='❌ API 키 미승인 — data.go.kr에서 흙토람 활용신청 필요';
-        document.getElementById('status-soilrda').className='api-status err';
-        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
-        return;
-      }
-      const xml=new DOMParser().parseFromString(text,'text/xml');
-      // XML resultCode 체크
-      const rc=xml.querySelector('resultCode')?.textContent||'';
-      if(rc&&rc!=='00'&&rc!=='0'){
-        const msg=xml.querySelector('resultMsg')?.textContent||rc;
-        document.getElementById('status-soilrda').textContent=`❌ API 오류 (${rc}) — ${msg}`;
-        document.getElementById('status-soilrda').className='api-status err';
-        document.getElementById('test-soilrda-status').innerHTML=`<span style="color:#ef9a9a">❌ 오류 ${rc}</span>`;
-        return;
-      }
-      const items=xml.getElementsByTagName('item');
-      if(items.length>0){
-        const soilNm=items[0].getElementsByTagName('siltNm')[0]?.textContent||items[0].getElementsByTagName('soilType')[0]?.textContent||'토양정보';
-        document.getElementById('status-soilrda').textContent=`✅ 연결 성공 — 토양: ${soilNm}`;
-        document.getElementById('status-soilrda').className='api-status ok';
-        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        document.getElementById('status-soilrda').textContent='❌ 해당 지역 토양 데이터 없음 (도시화 지역은 농경지 DB 미포함) — 키 자체는 유효할 수 있음';
-        document.getElementById('status-soilrda').className='api-status err';
-        document.getElementById('test-soilrda-status').innerHTML='<span style="color:#ffb74d">⚠️ 데이터 없음</span>';
-      }
-    }catch(e){document.getElementById('status-soilrda').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-soilrda').className='api-status err';}
-  }
-  else if(type==='nibr'){
-    const key=document.getElementById('key-nibr').value.trim();
-    if(!key){document.getElementById('status-nibr').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-nibr').textContent='⏳ 연결 테스트 중…';document.getElementById('status-nibr').className='api-status idle';
-    try{
-      const k=encodeURIComponent(key);
-      const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${k}&lat=37.5665&lon=126.9780&radius=5000&pageNo=1&numOfRows=5&type=json`;
-      const r=await fetch(url);const text=await r.text();
-      const isAuthErr=text.includes('SERVICE_KEY')||text.includes('SERVICE KEY')||
-        text.includes('REGISTERED ERROR')||text.includes('Unexpected')||
-        text.includes('APPLICATION_KEY')||text.includes('returnAuthMsg');
-      if(isAuthErr){
-        document.getElementById('status-nibr').textContent='❌ API 키 미승인 — data.go.kr → 국립생물자원관 → 활용신청 필요';
-        document.getElementById('status-nibr').className='api-status err';
-        document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 미승인 키</span>';
-        return;
-      }
-      let d; try{d=JSON.parse(text);}catch(pe){
-        document.getElementById('status-nibr').textContent='❌ 응답 파싱 오류 — 키 미승인 가능성 높음';
-        document.getElementById('status-nibr').className='api-status err';
-        document.getElementById('test-nibr-status').innerHTML='<span style="color:#ef9a9a">❌ 파싱 오류</span>';
-        return;
-      }
-      const rc=d.response?.header?.resultCode;
-      if(rc==='00'){
-        const items=d.response?.body?.items?.item;
-        const cnt=Array.isArray(items)?items.length:items?1:0;
-        document.getElementById('status-nibr').textContent=`✅ 연결 성공 — 서울 반경 5km 멸종위기종 ${cnt}종`;
-        document.getElementById('status-nibr').className='api-status ok';
-        document.getElementById('test-nibr-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        const msg=d.response?.header?.resultMsg||rc||'알 수 없음';
-        const isApproval=String(msg).includes('30')||String(msg).toUpperCase().includes('KEY');
-        document.getElementById('status-nibr').textContent=isApproval
-          ?'❌ 미승인 키 — data.go.kr에서 국립생물자원관 활용신청 필요'
-          :`❌ 응답 오류: ${msg}`;
-        document.getElementById('status-nibr').className='api-status err';
-        document.getElementById('test-nibr-status').innerHTML=`<span style="color:#ef9a9a">❌ ${isApproval?'미승인':'오류'}</span>`;
-      }
-    }catch(e){document.getElementById('status-nibr').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-nibr').className='api-status err';}
-  }
-  else if(type==='sgis'){
-    const cKey=document.getElementById('key-sgis-key').value.trim();
-    const cSec=document.getElementById('key-sgis-secret').value.trim();
-    if(!cKey||!cSec){document.getElementById('status-sgis').textContent='⚠️ Consumer Key + Consumer Secret 둘 다 입력하세요';return;}
-    document.getElementById('status-sgis').textContent='⏳ 토큰 발급 테스트 중…';document.getElementById('status-sgis').className='api-status idle';
-    try{
-      const url=`${WORKER_URL}/sgis/OpenAPI3/auth/authentication.json?consumer_key=${encodeURIComponent(cKey)}&consumer_secret=${encodeURIComponent(cSec)}`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-      const d=await r.json();
-      if(d.errCd===0&&d.result?.accessToken){
-        document.getElementById('status-sgis').textContent=`✅ 토큰 발급 성공 — 보행량·인구 연동 가능`;
-        document.getElementById('status-sgis').className='api-status ok';
-        document.getElementById('test-sgis-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        document.getElementById('status-sgis').textContent=`❌ 토큰 발급 실패 (errCd=${d.errCd}): ${d.errMsg||'키 오류'}`;
-        document.getElementById('status-sgis').className='api-status err';
-        document.getElementById('test-sgis-status').innerHTML='<span style="color:#ef9a9a">❌ 인증 실패</span>';
-      }
-    }catch(e){document.getElementById('status-sgis').textContent='❌ 연결 실패: '+e.message;document.getElementById('status-sgis').className='api-status err';}
-  }
-  else if(type==='vworld'){
-    const key=document.getElementById('key-vworld').value.trim();
-    if(!key){document.getElementById('status-vworld').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-vworld').textContent='⏳ 연결 테스트 중…';document.getElementById('status-vworld').className='api-status idle';
-    try{
-      const url=`https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key=${key}&format=json&geomFilter=POINT(126.9780%2037.5665)&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
-      const d=await vworldJsonp(url);
-      if(d.response&&d.response.status==='OK'){
-        const zone=d.response.result?.featureCollection?.features?.[0]?.properties?.UQ111_UQ111NM||'확인됨';
-        document.getElementById('status-vworld').textContent=`✅ 연결 성공 — 용도지역: ${zone}`;
-        document.getElementById('status-vworld').className='api-status ok';
-        document.getElementById('test-vworld-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        document.getElementById('status-vworld').textContent='❌ 응답 오류 — 키를 확인해주세요 ('+JSON.stringify(d.response?.status)+')';
-        document.getElementById('status-vworld').className='api-status err';
-        document.getElementById('test-vworld-status').innerHTML='<span style="color:#ef9a9a">❌ 키 오류</span>';
-      }
-    }catch(e){
-      document.getElementById('status-vworld').textContent='❌ 연결 실패: '+e.message;
-      document.getElementById('status-vworld').className='api-status err';
-    }
-  }
-  else if(type==='airkorea'){
-    const key=document.getElementById('key-airkorea').value.trim();
-    if(!key){document.getElementById('status-airkorea').textContent='⚠️ 키를 먼저 입력하세요';return;}
-    document.getElementById('status-airkorea').textContent='⏳ 연결 테스트 중…';document.getElementById('status-airkorea').className='api-status idle';
-    try{
-      const url=`${WORKER_URL}/airkorea/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${encodeURIComponent(key)}&returnType=json&numOfRows=5&pageNo=1&sidoName=${encodeURIComponent('서울')}&ver=1.0`;
-      const r=await fetch(url);const d=await r.json();
-      if(d.response?.body?.items?.length>0){
-        const sample=d.response.body.items[0];
-        document.getElementById('status-airkorea').textContent=`✅ 연결 성공 — ${sample.stationName||'측정소'} PM2.5: ${sample.pm25Value}㎍/㎥`;
-        document.getElementById('status-airkorea').className='api-status ok';
-        document.getElementById('test-airkorea-status').innerHTML='<span style="color:#81c784">✅ 유효한 키</span>';
-      }else{
-        document.getElementById('status-airkorea').textContent='❌ 응답 오류 — 키나 신청 상태를 확인해주세요';
-        document.getElementById('status-airkorea').className='api-status err';
-        document.getElementById('test-airkorea-status').innerHTML='<span style="color:#ef9a9a">❌ 키 오류</span>';
-      }
-    }catch(e){
-      document.getElementById('status-airkorea').textContent='❌ 연결 실패: '+e.message;
-      document.getElementById('status-airkorea').className='api-status err';
-    }
-  }
 }
-// 페이지 로드 시 저장된 키 불러오기
-try{
-  KEYS.vworld=localStorage.getItem('ls_vworld')||'525DBFC7-F789-3094-871F-CD46831310CB';
-  KEYS.airkorea=localStorage.getItem('ls_airkorea')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-  KEYS.kma=localStorage.getItem('ls_kma')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-  KEYS.soilrda=localStorage.getItem('ls_soilrda')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-  KEYS.nibr=localStorage.getItem('ls_nibr')||'37121f40ef670ab9758c3448f443c3627e5a506791d5c454283f8f04b5ea270c';
-}catch(e){}
 // settingsModal은 스크립트 아래 HTML에 있으므로 DOMContentLoaded 후 이벤트 연결
 document.addEventListener('DOMContentLoaded',function(){
   const sm=document.getElementById('settingsModal');
   if(sm) sm.addEventListener('click',function(e){if(e.target===this)closeSettings();});
 });
-// 로드 시 헤더 상태 업데이트
-setTimeout(updateHeaderApiCount, 100);
 
 // ════════════════════════════════════════════
 // 실제 API: 브이월드 — 용도지역
 // ════════════════════════════════════════════
 async function getRealUrban(c){
-  if(!KEYS.vworld) return null;
+  if(!AVAIL.vworld) return null;
   try{
     // ── 0) NED WFS 토지이용계획 (가장 신뢰성 높은 용도지역 데이터) ──
     // 매우 작은 BBOX로 해당 필지 조회 → prpos_area_dstrc_nm_list 파싱
@@ -5178,8 +4930,8 @@ async function getRealUrban(c){
       const nedBbox=`${(c.lat-nd).toFixed(6)},${(c.lng-nd).toFixed(6)},${(c.lat+nd).toFixed(6)},${(c.lng+nd).toFixed(6)},EPSG:4326`;
       // 토지이용계획WFS + 토지특성WFS 병렬 조회
       const [nedR1,nedR2]=await Promise.allSettled([
-        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandUseWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=5&output=application/json&key=${KEYS.vworld}`,{signal:AbortSignal.timeout(8000)}),
-        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandCharacteristicsWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=3&output=application/json&key=${KEYS.vworld}`,{signal:AbortSignal.timeout(8000)}),
+        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandUseWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=5&output=application/json`,{signal:AbortSignal.timeout(8000)}),
+        fetch(`${WORKER_URL}/vworld-ned-wfs/getLandCharacteristicsWFS?bbox=${encodeURIComponent(nedBbox)}&maxFeatures=3&output=application/json`,{signal:AbortSignal.timeout(8000)}),
       ]);
       // ① 토지이용계획WFS → 용도지역지구명 목록
       if(nedR1.status==='fulfilled'){
@@ -5222,7 +4974,7 @@ async function getRealUrban(c){
     // POINT 쿼리는 강/수역 위 좌표에서 NOT_FOUND 발생 → BBOX로 주변 300m 범위 검색
     const d=0.003; // 약 300m
     const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
-    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=${bbox}&crs=EPSG:4326&size=5&geometry=false&attribute=true&key=${KEYS.vworld}`;
+    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=${bbox}&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
     // UQ111 용도지역, UQ112 용도지구, UQ113 용도구역(개발제한), NSR001 자연공원
     const fetchVworld=async(url)=>{
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
@@ -5393,9 +5145,8 @@ async function fetchEcoGrade(pnu){
   if(!pnu||pnu.length<8) return null;
   try{
     const emdCd=pnu.substring(0,8);
-    const key=encodeURIComponent(KEYS.nibr||KEYS.kma||'');
-    if(!key||key==='') return null;
-    const url=`${WORKER_URL}/ecomap/attr/getEcologyzmpAttr?serviceKey=${key}&numOfRows=20&pageNo=1&type=json&emdCd=${emdCd}`;
+    if(!AVAIL.nibr&&!AVAIL.kma) return null;
+    const url=`${WORKER_URL}/ecomap/attr/getEcologyzmpAttr?numOfRows=20&pageNo=1&type=json&emdCd=${emdCd}`;
     const r=await fetch(url);
     const text=await r.text();
     if(text.includes('Unexpected')||text.includes('SERVICE_KEY')||text.includes('DENIED')) return null;
@@ -5511,7 +5262,7 @@ async function getRealKMAWeather(c){
 // KMA 단기예보 (기상청 data.go.kr)
 // 발표시각: 0200,0500,0800,1100,1400,1700,2000,2300 — 발표 후 10분 이후 호출 가능
 async function getRealKMAWeatherKMA(c){
-  if(!KEYS.kma) return null;
+  if(!AVAIL.kma) return null;
   try{
     const now=new Date();
     const pad=n=>String(n).padStart(2,'0');
@@ -5533,9 +5284,8 @@ async function getRealKMAWeatherKMA(c){
     }
     const baseTime=`${pad(baseH)}00`;
     const {nx,ny}=latLngToKMAGrid(c.lat,c.lng);
-    const key=encodeURIComponent(KEYS.kma);
     // numOfRows=290: 발표당 최대 약 290개 (시간별 요소 × 예보시간)
-    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${key}&pageNo=1&numOfRows=290&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
+    const url=`${WORKER_URL}/kma/VilageFcstInfoService_2.0/getVilageFcst?pageNo=1&numOfRows=290&dataType=JSON&base_date=${baseDate}&base_time=${baseTime}&nx=${nx}&ny=${ny}`;
     const r=await fetch(url);
     const text=await r.text();
     if(text.includes('Unexpected')||text.includes('SERVICE_KEY')){
@@ -5613,8 +5363,7 @@ async function getRealKMAWeatherKMA(c){
 // 실제 API: 흙토람 V3 (RDA) — 토양특성 상세정보
 // ════════════════════════════════════════════
 async function getRealSoilRDA(coords, address){
-  if(!KEYS.soilrda) return null;
-  const key=encodeURIComponent(KEYS.soilrda);
+  if(!AVAIL.soilrda) return null;
 
   // 배수등급 코드표
   const drainMap={'01':'매우양호','02':'양호','03':'약간양호','04':'약간불량','05':'불량','06':'매우불량','99':'기타'};
@@ -5635,7 +5384,7 @@ async function getRealSoilRDA(coords, address){
   try{
     const pnu=await fetchPNU(coords.lat, coords.lng);
     if(pnu){
-      const url=`${WORKER_URL}/soil-v3?serviceKey=${key}&PNU_CD=${pnu}`;
+      const url=`${WORKER_URL}/soil-v3?PNU_CD=${pnu}`;
       const r=await fetch(url);
       const text=await r.text();
       if(!text.includes('Unexpected')&&!text.includes('KEY_AUTH')){
@@ -5675,7 +5424,7 @@ async function getRealSoilRDA(coords, address){
   // ② V2 폴백: 주소 기반
   try{
     const addr=encodeURIComponent((address||'').replace(/\s+/g,' ').trim());
-    const url=`${WORKER_URL}/soil-v2?serviceKey=${key}&numOfRows=5&pageNo=1&address=${addr}`;
+    const url=`${WORKER_URL}/soil-v2?numOfRows=5&pageNo=1&address=${addr}`;
     const r=await fetch(url);
     const text=await r.text();
     if(text.includes('Unexpected')||text.includes('KEY_AUTH')) return null;
@@ -5701,18 +5450,17 @@ async function getRealSoilRDA(coords, address){
 // (법정동코드 = PNU 앞 10자리)
 // ════════════════════════════════════════════
 async function getRealSoilChem(pnu){
-  if(!KEYS.soilrda||!pnu||pnu.length<10){
-    console.log('🧪 농경지화학성 스킵 — soilrda키:',(!!KEYS.soilrda),'pnu:',pnu?.length);
+  if(!AVAIL.soilrda||!pnu||pnu.length<10){
+    console.log('🧪 농경지화학성 스킵 — soilrda:',(!!AVAIL.soilrda),'pnu:',pnu?.length);
     return null;
   }
-  const key=encodeURIComponent(KEYS.soilrda);
   const bjdCd=pnu.slice(0,10);
   const base=`${WORKER_URL}/soil-stat`;
   const numOfRows=5;
   try{
     const fetchStat=async(ep)=>{
-      const url=`${base}/${ep}?serviceKey=${key}&BJD_CD=${bjdCd}&numOfRows=${numOfRows}&pageNo=1`;
-      console.log('🧪 농경지화학성 요청:',url.replace(key,'[KEY]'));
+      const url=`${base}/${ep}?BJD_CD=${bjdCd}&numOfRows=${numOfRows}&pageNo=1`;
+      console.log('🧪 농경지화학성 요청:',url);
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
       const txt=await r.text();
       console.log('🧪 농경지화학성',ep,'응답 앞 300자:',txt.slice(0,300));
@@ -5761,12 +5509,11 @@ async function getRealSoilChem(pnu){
 // 실제 API: 국가지하수정보시스템 — 최근접 관측정 지하수위
 // ════════════════════════════════════════════
 async function getRealGroundwater(coords){
-  if(!KEYS.groundwater) return null;
+  if(!AVAIL.groundwater) return null;
   try{
-    const key=encodeURIComponent(KEYS.groundwater);
     // 국가지하수정보시스템: 좌표 파라미터는 obslt/obslng (위도/경도)
-    const url=`${WORKER_URL}/groundwater/getGrdWtrMeasureList?serviceKey=${key}&obslt=${coords.lat}&obslng=${coords.lng}&radius=5000&numOfRows=10&pageNo=1`;
-    console.log('💧 지하수위 요청:',url.replace(key,'[KEY]'));
+    const url=`${WORKER_URL}/groundwater/getGrdWtrMeasureList?obslt=${coords.lat}&obslng=${coords.lng}&radius=5000&numOfRows=10&pageNo=1`;
+    console.log('💧 지하수위 요청:',url);
     const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
     const txt=await r.text();
     console.log('💧 지하수위 응답 앞 400자:',txt.slice(0,400));
@@ -5812,7 +5559,7 @@ async function getRealGroundwater(coords){
 // 실제 API: 식품안전나라 I2390 — 토양실태조사 오염도
 // ════════════════════════════════════════════
 async function getRealSoilContamination(address){
-  if(!KEYS.soilContam) return null;
+  if(!AVAIL.soilContam) return null;
   try{
     // 시군구 수준 주소 추출 (예: "경기도 양평군 양서면 ..." → "경기도 양평군")
     const addrShort=(()=>{
@@ -5826,7 +5573,7 @@ async function getRealSoilContamination(address){
     })();
     if(!addrShort) return null;
 
-    const url=`${WORKER_URL}/soil-contamination/${KEYS.soilContam}/I2390/json/1/20?ADDR=${encodeURIComponent(addrShort)}`;
+    const url=`${WORKER_URL}/soil-contamination/I2390/json/1/20?ADDR=${encodeURIComponent(addrShort)}`;
     const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
     const txt=await r.text();
     if(!txt||txt.includes('ERROR')) return null;
@@ -5870,11 +5617,10 @@ async function getRealSoilContamination(address){
 // 실제 API: 국립생물자원관 — 주변 멸종위기종
 // ════════════════════════════════════════════
 async function getRealSpeciesNIBR(c){
-  if(!KEYS.nibr) return null;
+  if(!AVAIL.nibr) return null;
   try{
-    const key=encodeURIComponent(KEYS.nibr);
     // 국립생물자원관 생물다양성 분포 API — 격자 기반
-    const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?serviceKey=${key}&lat=${c.lat}&lon=${c.lng}&radius=5000&pageNo=1&numOfRows=20&type=json`;
+    const url=`${WORKER_URL}/nibr/endangeredSpeciesSvc/getESNearbyList?lat=${c.lat}&lon=${c.lng}&radius=5000&pageNo=1&numOfRows=20&type=json`;
     const r=await fetch(url);
     const d=await r.json();
     if(d.response?.body?.items){
@@ -5897,11 +5643,10 @@ async function getRealSpeciesNIBR(c){
 // 활용신청: 국토교통부_전국버스정류장정보 조회서비스 (1613000)
 // ════════════════════════════════════════════
 async function getRealBusStops(c){
-  if(!KEYS.kma) return null; // 공공데이터포털 동일 키 사용
+  if(!AVAIL.kma) return null; // 공공데이터포털 동일 키 사용
   try{
-    const key=encodeURIComponent(KEYS.kma);
     // GPS 좌표 기반 반경 내 버스 정류장 조회
-    const url=`${WORKER_URL}/bus-stop?serviceKey=${key}&numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
+    const url=`${WORKER_URL}/bus-stop?numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
     const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
     const text=await r.text();
     if(text.includes('SERVICE_KEY')||text.includes('REGISTERED')||text.includes('Unexpected')) return null;
@@ -5930,13 +5675,13 @@ async function getRealBusStops(c){
 // 실제 API: 홍수위험지도 WFS — floodmap.go.kr (Worker: /floodmap-wfs 라우트 필요)
 // ════════════════════════════════════════════
 async function getRealFloodRisk(c){
-  if(!KEYS.flood) return null;
+  if(!AVAIL.flood) return null;
   try{
     // 홍수위험지도 WFS — 포인트 인터섹션 쿼리
     const bbox=`${c.lng-0.005},${c.lat-0.005},${c.lng+0.005},${c.lat+0.005}`;
     const url=`${WORKER_URL}/floodmap-wfs?SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature`+
       `&TypeName=flood_risk_area&outputFormat=application/json`+
-      `&BBOX=${bbox}&srsName=EPSG:4326&apiKey=${KEYS.flood}`;
+      `&BBOX=${bbox}&srsName=EPSG:4326`;
     const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
     const d=await r.json();
     const features=d.features||[];
@@ -5960,11 +5705,10 @@ async function getRealFloodRisk(c){
 // 활용신청: 환경부_국가소음측정망정보 조회서비스 (B552584)
 // ════════════════════════════════════════════
 async function getRealNoise(c){
-  if(!KEYS.airkorea) return null;
+  if(!AVAIL.airkorea) return null;
   try{
-    const key=encodeURIComponent(KEYS.airkorea);
     // 가장 가까운 소음 측정소 데이터 조회
-    const url=`${WORKER_URL}/noise?serviceKey=${key}&returnType=json&numOfRows=10&pageNo=1`;
+    const url=`${WORKER_URL}/noise?returnType=json&numOfRows=10&pageNo=1`;
     const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
     const d=await r.json();
     const items=d.response?.body?.items?.item||[];
@@ -5995,12 +5739,11 @@ async function getRealNoise(c){
 // 발급: https://sgis.kostat.go.kr/developer/html/newOpenApi/api/develop/accessToken.html
 // ════════════════════════════════════════════
 async function getSgisPopulation(c){
-  if(!KEYS.sgis||!KEYS.sgisSecret) return null; // consumer_key + consumer_secret 둘 다 필요
+  if(!AVAIL.sgis) return null; // consumer_key + consumer_secret 둘 다 필요
   const W=WORKER_URL;
   try{
-    // 1단계: 액세스 토큰 발급 (consumer_key ≠ consumer_secret — sgis.kostat.go.kr에서 발급받은 두 값)
-    const tokenUrl=`${W}/sgis/OpenAPI3/auth/authentication.json`+
-      `?consumer_key=${encodeURIComponent(KEYS.sgis)}&consumer_secret=${encodeURIComponent(KEYS.sgisSecret)}`;
+    // 1단계: 액세스 토큰 발급 (Worker가 키를 주입)
+    const tokenUrl=`${W}/sgis-token`;
     const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(8000)});
     const td=await tr.json();
     if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패(errCd='+td.errCd+'):',td.errMsg);return null;}
@@ -6095,11 +5838,10 @@ function isGyeonggi(c){
   return c.lat>=36.9&&c.lat<=38.3&&c.lng>=126.4&&c.lng<=127.9;
 }
 async function getGyeonggiProtected(c, address){
-  if(!KEYS.gyeonggi||!isGyeonggi(c)) return null;
+  if(!AVAIL.gyeonggi||!isGyeonggi(c)) return null;
   try{
-    const key=encodeURIComponent(KEYS.gyeonggi);
-    // 보호종 현황 (전체 목록 — DIV_NM별 필터 가능)
-    const urlProt=`https://openapi.gg.go.kr/Protected?KEY=${key}&Type=json&pIndex=1&pSize=100&DIV_NM=포유류`;
+    // 보호종 현황 (전체 목록 — DIV_NM별 필터 가능, Worker가 키 주입)
+    const urlProt=`${WORKER_URL}/gg-protected?Type=json&pIndex=1&pSize=100&DIV_NM=포유류`;
     const r1=await fetch(urlProt);
     const d1=await r1.json();
     const rows1=d1?.Protected?.[1]?.row||[];
@@ -6109,7 +5851,7 @@ async function getGyeonggiProtected(c, address){
     let rows2=[];
     if(sigunMatch){
       const sigunNm=sigunMatch[1];
-      const urlTree=`https://openapi.gg.go.kr/ProtectedTree?KEY=${key}&Type=json&pIndex=1&pSize=100&SIGUN_NM=${encodeURIComponent(sigunNm)}`;
+      const urlTree=`${WORKER_URL}/gg-protected-tree?Type=json&pIndex=1&pSize=100&SIGUN_NM=${encodeURIComponent(sigunNm)}`;
       const r2=await fetch(urlTree);
       const d2=await r2.json();
       rows2=d2?.ProtectedTree?.[1]?.row||[];
@@ -6167,11 +5909,10 @@ function getDoSeCode(address){
   return 0;
 }
 async function getRealAgriWeather(c, address){
-  if(!KEYS.soilrda) return null;
+  if(!AVAIL.soilrda) return null;
   try{
     const doSe=getDoSeCode(address);
-    const key=encodeURIComponent(KEYS.soilrda);
-    const url=`${WORKER_URL}/agriweather/getObsrSpotList?serviceKey=${key}&Page_Size=100&Page_No=1&Do_Se_Code=${doSe}`;
+    const url=`${WORKER_URL}/agriweather/getObsrSpotList?Page_Size=100&Page_No=1&Do_Se_Code=${doSe}`;
     const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
     const text=await r.text();
     if(!text||text.includes('KEY_AUTH')||!text.includes('<item>')) return null;
@@ -6203,17 +5944,17 @@ async function getRealAgriWeather(c, address){
 
 // ════════════════════════════════════════════
 // 실제 API: 국토환경성평가지도 — ECVAM WMS GetFeatureInfo
-// 키: KEYS.envgrd (YD6X-CR5X-EJDT-V2OJ), Worker /ecvam 경유
+// 키: Worker 환경변수 ENVGRD_KEY, Worker /ecvam 경유
 // ════════════════════════════════════════════
 async function getRealEnvGrade(c){
-  if(!KEYS.envgrd) return null;
+  if(!AVAIL.envgrd) return null;
   try{
     const d=0.0008; // ~80m bbox
     const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
     const url=`${WORKER_URL}/ecvam?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
       `&LAYERS=lt_c_enveval_res&QUERY_LAYERS=lt_c_enveval_res`+
       `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
-      `&INFO_FORMAT=application/json&APIKEY=${KEYS.envgrd}&DOMAIN=hubminyoung.github.io`;
+      `&INFO_FORMAT=application/json`;
     const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
     const text=await r.text();
     if(!text||text.trim().startsWith('<')) return null; // HTML error → null
@@ -6245,12 +5986,12 @@ async function getRealLandcover(c){
   const d=0.003; // ~300m BBOX
 
   // ─── ① VWorld LT_C_LNLCMPTN (토지이용현황 — 환경부 토지피복도 동일 분류체계) ────
-  if(KEYS.vworld){
+  if(AVAIL.vworld){
     try{
       const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
       const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json`+
         `&geomFilter=${bbox}&crs=EPSG:4326&size=3&geometry=false&attribute=true`+
-        `&key=${KEYS.vworld}&data=LT_C_LNLCMPTN`;
+        `&data=LT_C_LNLCMPTN`;
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
       const txt=await r.text();
       console.log('🗺️ 토지이용현황(VWorld) 응답:', txt.slice(0,200));
@@ -6392,7 +6133,7 @@ function getWinterBirds(c){
 // 실제 API: 에어코리아 — PM2.5/PM10
 // ════════════════════════════════════════════
 async function getRealAir(c){
-  if(!KEYS.airkorea) return null;
+  if(!AVAIL.airkorea) return null;
   try{
     // 전국 17개 시도 좌표 기반 판별
     function detectSido(lat,lng){
@@ -6416,8 +6157,7 @@ async function getRealAir(c){
       return'서울'; // fallback
     }
     let sidoName=detectSido(c.lat,c.lng);
-    const key=encodeURIComponent(KEYS.airkorea);
-    const url=`${WORKER_URL}/airkorea/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?serviceKey=${key}&returnType=json&numOfRows=100&pageNo=1&sidoName=${encodeURIComponent(sidoName)}&ver=1.0`;
+    const url=`${WORKER_URL}/airkorea/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?returnType=json&numOfRows=100&pageNo=1&sidoName=${encodeURIComponent(sidoName)}&ver=1.0`;
     const r=await fetch(url);
     const d=await r.json();
     if(d.response&&d.response.body&&d.response.body.items){
@@ -6445,7 +6185,7 @@ async function getRealAir(c){
 <div class="modal-overlay" id="settingsModal">
   <div class="modal-box">
     <div class="modal-title">⚙️ 데이터 연동 현황</div>
-    <div class="modal-sub">실제 데이터 API 연결 상태를 확인하고 추가 키를 등록하세요. 키는 브라우저에 자동 저장됩니다.</div>
+    <div class="modal-sub">실제 데이터 API 연결 상태를 확인하세요. 키는 Cloudflare Worker 환경변수로 안전하게 관리됩니다.</div>
 
     <!-- 자동 연결 섹션 -->
     <div style="font-size:11px;font-weight:700;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">🔄 자동 연결 (키 불필요)</div>
@@ -6486,118 +6226,62 @@ async function getRealAir(c){
       </div>
     </div>
 
-    <!-- 추가 키 등록 섹션 -->
-    <div style="font-size:11px;font-weight:700;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;">🔑 추가 키 등록 (정밀도 향상)</div>
+    <!-- Worker 키 상태 섹션 -->
+    <div style="font-size:11px;font-weight:700;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin:14px 0 8px;">🔑 Worker 연동 API (Cloudflare Worker 환경변수로 관리)</div>
+
+    <button onclick="fetchKeysStatus()" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:6px 14px;color:#4fc3f7;font-size:11px;cursor:pointer;width:100%;margin-bottom:12px;">🔄 Worker 키 상태 새로고침</button>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">🏛️ 브이월드 (국토교통부)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">법정 용도지역 정확값 · <a class="api-link" href="https://www.vworld.kr/dev/v4dv_mapsandapi_s002.do" target="_blank">키 발급 (무료)</a></div>
-        </div>
-        <div id="test-vworld-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-vworld" placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('vworld')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-vworld" style="margin-top:4px;">⬡ 미설정 — OSM 토지이용 사용 중</div>
+      <div class="api-group-title">🏛️ 브이월드 (국토교통부)</div>
+      <div class="api-group-desc">법정 용도지역 정확값 · Worker 변수: <code>VWORLD_KEY</code></div>
+      <div class="api-status idle" id="status-vworld">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → VWORLD_KEY</div>
     </div>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">💨 에어코리아 (한국환경공단)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">PM2.5/PM10/O3/NO2 시도별 실시간 · <a class="api-link" href="https://www.data.go.kr/data/15073861/openapi.do" target="_blank">키 신청 (무료)</a></div>
-        </div>
-        <div id="test-airkorea-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-airkorea" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('airkorea')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-airkorea" style="margin-top:4px;">⬡ 미설정 — OpenAQ 사용 중</div>
+      <div class="api-group-title">💨 에어코리아 (한국환경공단)</div>
+      <div class="api-group-desc">PM2.5/PM10/O3/NO2 시도별 실시간 · Worker 변수: <code>AIRKOREA_KEY</code></div>
+      <div class="api-status idle" id="status-airkorea">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → AIRKOREA_KEY</div>
     </div>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">🌦️ 기상자료개방포털 (KMA)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">한국 5km 격자 단기예보 실측 · <a class="api-link" href="https://www.data.go.kr/data/15084084/openapi.do" target="_blank">키 신청 (무료)</a></div>
-        </div>
-        <div id="test-kma-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-kma" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('kma')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-kma" style="margin-top:4px;">⬡ 미설정 — Open-Meteo 사용 중 (키 입력 시 KMA 격자 기상으로 업그레이드)</div>
+      <div class="api-group-title">🌦️ 기상자료개방포털 (KMA)</div>
+      <div class="api-group-desc">한국 5km 격자 단기예보 실측 · Worker 변수: <code>KMA_KEY</code></div>
+      <div class="api-status idle" id="status-kma">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → KMA_KEY</div>
     </div>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">🌡️ 기상청 API허브 (apihub.kma.go.kr)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">ASOS 지상관측 기후통계 — 실제 평년값 (연평균기온·연강수량·풍향·극한기온) · <a class="api-link" href="https://apihub.kma.go.kr" target="_blank">키 신청 (무료)</a></div>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-kma-hub" placeholder="apihub.kma.go.kr 인증키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('kmaHub')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-kma-hub" style="margin-top:4px;">⬡ 미설정 — Open-Meteo ERA5 사용 중 (키 입력 시 기상청 실측 평년값으로 업그레이드)</div>
+      <div class="api-group-title">🌡️ 기상청 API허브 (apihub.kma.go.kr)</div>
+      <div class="api-group-desc">ASOS 지상관측 기후통계 실제 평년값 · Worker 변수: <code>KMAHUB_KEY</code></div>
+      <div class="api-status idle" id="status-kma-hub">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → KMAHUB_KEY</div>
     </div>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">🪨 흙토람 (농촌진흥청 RDA)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">실제 토양 유형·pH·배수등급 · <a class="api-link" href="https://www.data.go.kr/data/15003093/openapi.do" target="_blank">키 신청 (무료)</a></div>
-        </div>
-        <div id="test-soilrda-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-soilrda" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('soilrda')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-soilrda" style="margin-top:4px;">⬡ 미설정 — 시뮬레이션 사용 중 (키 입력 시 실제 토양 데이터로 업그레이드)</div>
+      <div class="api-group-title">🪨 흙토람 (농촌진흥청 RDA)</div>
+      <div class="api-group-desc">실제 토양 유형·pH·배수등급 · Worker 변수: <code>SOILRDA_KEY</code></div>
+      <div class="api-status idle" id="status-soilrda">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → SOILRDA_KEY</div>
     </div>
 
     <div class="api-group">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">🦎 국립생물자원관 (NIBR)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">반경 5km 멸종위기종 실제 분포 · <a class="api-link" href="https://www.data.go.kr/data/15122312/openapi.do" target="_blank">키 신청 (무료)</a></div>
-        </div>
-        <div id="test-nibr-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <input class="api-input" id="key-nibr" placeholder="공공데이터포털 Decoding 키" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('nibr')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <div class="api-status idle" id="status-nibr" style="margin-top:4px;">⬡ 미설정 — 시뮬레이션 사용 중 (키 입력 시 실제 멸종위기종 데이터로 업그레이드)</div>
+      <div class="api-group-title">🦎 국립생물자원관 (NIBR)</div>
+      <div class="api-group-desc">반경 5km 멸종위기종 실제 분포 · Worker 변수: <code>NIBR_KEY</code></div>
+      <div class="api-status idle" id="status-nibr">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → NIBR_KEY</div>
     </div>
 
-    <!-- ── SGIS 통계청 보행량·인구 ── -->
     <div class="api-group">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
-        <div>
-          <div class="api-group-title">👥 통계청 SGIS (보행량·인구밀도)</div>
-          <div class="api-group-desc" style="margin-bottom:0;">일평균 보행량 · 인구밀도 실측 · <a class="api-link" href="https://sgis.kostat.go.kr/developer" target="_blank">키 발급 (무료)</a></div>
-        </div>
-        <div id="test-sgis-status" style="font-size:10px;text-align:right;flex-shrink:0;"></div>
-      </div>
-      <div style="display:flex;gap:6px;margin-bottom:4px;">
-        <input class="api-input" id="key-sgis-key" placeholder="Consumer Key" type="text" style="margin-bottom:0;flex:1;">
-        <button onclick="testApi('sgis')" style="background:#0d2a3a;border:1px solid #0288d1;border-radius:6px;padding:0 10px;color:#4fc3f7;font-size:11px;cursor:pointer;white-space:nowrap;">🔍 테스트</button>
-      </div>
-      <input class="api-input" id="key-sgis-secret" placeholder="Consumer Secret" type="text" style="margin-bottom:4px;">
-      <div class="api-status idle" id="status-sgis" style="margin-top:0;">⬡ 미설정 — 발급 시 보행량·인구밀도 실측값 연동</div>
+      <div class="api-group-title">👥 통계청 SGIS (보행량·인구밀도)</div>
+      <div class="api-group-desc">일평균 보행량 · 인구밀도 실측 · Worker 변수: <code>SGIS_KEY</code> + <code>SGIS_SECRET</code></div>
+      <div class="api-status idle" id="status-sgis">확인 중…</div>
+      <div style="font-size:10px;color:#546e7a;margin-top:3px;">키 설정: Cloudflare Worker → Settings → Variables &amp; Secrets → SGIS_KEY / SGIS_SECRET</div>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:16px;">
       <button onclick="closeSettings()" style="flex:1;padding:10px;background:#1a2a3a;border:1px solid #37474f;border-radius:8px;color:#90a4ae;font-size:13px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;">닫기</button>
-      <button onclick="saveApiKeys()" style="flex:2;padding:10px;background:#0288d1;border:none;border-radius:8px;color:white;font-size:13px;font-weight:700;cursor:pointer;font-family:'Noto Sans KR',sans-serif;">✅ 저장</button>
     </div>
   </div>
 </div>
