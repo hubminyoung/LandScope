@@ -1011,8 +1011,8 @@ async function _doAnalysis(address, coords){
         status:'real',verifyUrl:`https://explore.openaq.org/`,verifyLabel:'OpenAQ 탐색기'});
     }else{
       dataLog.push({category:'대기질 (PM2.5)',icon:'💨',api:'OpenAQ v3 (CORS 제한)',
-        url:openaqUrl,note:'CORS 오류 또는 측정소 미발견 — 에어코리아 키 설정 시 실측 연동 가능',
-        values:'미연동 (에어코리아 키 설정 필요)',status:'fail',
+        url:openaqUrl,note:'CORS 오류 또는 측정소 미발견 — Worker AIRKOREA_KEY 설정 시 실측 연동',
+        values:'미연동 (Worker AIRKOREA_KEY 미설정)',status:'fail',
         verifyUrl:'https://www.airkorea.or.kr/',verifyLabel:'에어코리아 키 발급'});
     }
 
@@ -1092,7 +1092,7 @@ async function _doAnalysis(address, coords){
       api:sgisPop?'통계청 SGIS 2020 인구총조사':'시뮬레이션 (SGIS 키 미설정)',
       url:'https://sgis.kostat.go.kr/',
       note:sgisPop?`통계청 SGIS 격자 기반 실측값 (2020)`:
-        'SGIS 키 미설정 — sgis.kostat.go.kr에서 무료 발급 후 설정 가능',
+        'SGIS 미연동 (Worker SGIS_KEY / SGIS_SECRET 미설정)',
       values:sgisPop?`인구밀도 ${sgisPop.popD?.toLocaleString()}명/㎢ (실측)`:`인구 데이터 미연동`,
       status:sgisPop?'real':'simulated',
       verifyUrl:'https://sgis.kostat.go.kr/',verifyLabel:'SGIS 바로가기'});
@@ -1160,7 +1160,7 @@ async function _doAnalysis(address, coords){
 
     // ── 에어코리아 로그 ──
     if(realAir&&realAir.reliability==='real'){
-      dataLog.push({category:'대기질 (에어코리아)',icon:'🌫️',api:'에어코리아 한국환경공단 (키 필요)',
+      dataLog.push({category:'대기질 (에어코리아)',icon:'🌫️',api:'에어코리아 한국환경공단',
         url:'https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty',
         note:`시도 ${realAir.station.split(' ')[0]} 전체 측정소 데이터 취합 — ${realAir.station}`,
         values:`PM2.5 ${realAir.pm25}㎍/㎥ (${realAir.pm25g}) / PM10 ${realAir.pm10}㎍/㎥`,
@@ -1295,7 +1295,7 @@ async function _doAnalysis(address, coords){
         } else if(ecoReal.grade===2&&!ecology.implications.some(i=>i.includes('2등급'))){
           ecology.implications.unshift('🟡 생태자연도 2등급 — 개발 최소화·생태 완충녹지 확보');
         }
-        dataLog.push({category:'생태자연도 (국립생태원)',icon:'🌿',api:'생태자연도 EcologyzmpService (키 필요)',
+        dataLog.push({category:'생태자연도 (국립생태원)',icon:'🌿',api:'생태자연도 EcologyzmpService',
           url:'https://apis.data.go.kr/B553084/ecoapi/EcologyzmpService/attr/getEcologyzmpAttr',
           note:`읍면동코드(${ecoReal.emdCd}) 기반 생태자연도 속성 조회`,
           values:`생태자연도 ${ecoReal.grade}등급 / 식생평가 ${ecoReal.vtnGrade||'—'}등급 / 동식물 ${ecoReal.ampltGrade||'—'}등급 / 식물군락 ${ecoReal.plntCln||'—'}`,
@@ -2287,9 +2287,9 @@ function buildUrban(c,osm){
   if(zone.includes('상업'))imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
   if(greenPlan)imp.push('🌳 녹지 계획 연계 가능');
   if(greenbelt)imp.push('🚫 그린벨트 → 개발 제한, 보전 녹지 유지 필수');
-  if(zone==='확인필요')imp.push('⚠️ VWorld 키 설정 시 정확한 용도지역 확인 가능');
+  if(zone==='확인필요')imp.push('⚠️ Worker VWORLD_KEY 설정 시 정확한 용도지역 확인 가능');
   return{zone,fsr,bcr,heritage:false,greenPlan,greenbelt,restr,implications:imp,
-    source:osm?'실제 (OpenStreetMap 토지이용)':'미확인 (VWorld 키 필요)',
+    source:osm?'실제 (OpenStreetMap 토지이용)':'미확인 (Worker VWORLD_KEY 미설정)',
     reliability:osm?'partial':'unknown'};
 }
 function buildTraffic(c,osm,realBus,sgisPop){
@@ -2576,7 +2576,7 @@ function getSocial(c, sgisPop){
   // SGIS 없음 → 프로그램만 유지, 수치는 null로 처리
   progs.push('🌿 다목적 복합공원');
   return{popD:null,age:null,progs,
-    source:'SGIS 미연동 — sgis.kostat.go.kr 키 발급 필요',reliability:'none'};
+    source:'SGIS 미연동 (Worker SGIS_KEY / SGIS_SECRET 미설정)',reliability:'none'};
 }
 
 // ════════════════════════════════════════════
@@ -2840,8 +2840,8 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   }else{
     indicators.push({key:'air',icon:'🫁',label:'PM2.5 대기질',
       current:'미연동',standard:'연평균 15㎍/㎥ 이하 / 일평균 35㎍/㎥ 이하',status:'unknown',
-      judgment:'에어코리아 API 키 설정 후 실측값 조회 가능',
-      source:'환경정책기본법 시행령 별표1',sourceUrl:'https://www.airkorea.or.kr',strategies:['에어코리아 키를 설정하면 실측 PM2.5 데이터를 자동 연동합니다']});
+      judgment:'Worker AIRKOREA_KEY 설정 후 실측값 자동 연동',
+      source:'환경정책기본법 시행령 별표1',sourceUrl:'https://www.airkorea.or.kr',strategies:['Cloudflare Worker에 AIRKOREA_KEY 시크릿 설정 시 실측 PM2.5 자동 연동']});
   }
 
   // ─── 4. 소음 환경 ─────────────────────────────────────────────
@@ -3894,7 +3894,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 미연동)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
@@ -3935,7 +3935,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 API 조회 중)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 미연동)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
@@ -3986,7 +3986,7 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25!=null?`${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}`:badge('미연동','grey')}</span></div>
         <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal!=null?`${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}`:badge('미연동','grey')}</span></div>
         ${[...soil.implications,...(air.pm25!=null||air.noiseReal!=null?air.implications:[])].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        <div class="source-row">${air.reliability==='real'?`● 실시간 (${air.source}${air.station?' · '+air.station:''})`:badge('에어코리아 키 필요','grey')+' <a href="https://www.airkorea.or.kr/" target="_blank" style="color:#4fc3f7;font-size:10px">발급</a>'}</div>
+        <div class="source-row">${air.reliability==='real'?`● 실시간 (${air.source}${air.station?' · '+air.station:''})`:badge('에어코리아 미연동','grey')+' <span style="font-size:10px;color:#546e7a">Worker AIRKOREA_KEY 미설정</span>'}</div>
         ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:'<div class="source-row">'+badge('소음측정망 미연동','grey')+'</div>'}
         <div class="source-row">⬡ ${soil.source}</div>
       </div>
