@@ -432,22 +432,10 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <div class="layer-panel" id="layerPanel">
         <div style="font-size:11px;font-weight:700;color:#546e7a;margin-bottom:8px;">지도 레이어</div>
         <label class="layer-item"><input type="checkbox" id="l-buf" checked onchange="toggleBuf()"> 📍 분석 반경</label>
-        <label class="layer-item"><input type="checkbox" id="l-eco" onchange="toggleEco()"> 🌿 생태 거점 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
-        <label class="layer-item"><input type="checkbox" id="l-sub" onchange="toggleSub()"> 🚇 지하철역 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
-        <label class="layer-item"><input type="checkbox" id="l-flood" onchange="toggleFlood()"> 💧 홍수 위험지 <span style="font-size:9px;color:#455a64">(전국 DB)</span></label>
-        <label class="layer-item"><input type="checkbox" id="l-species" onchange="toggleSpecies()"> 🔴 서식종 마커 <span style="font-size:9px;color:#455a64">(분석 후 자동 표시)</span></label>
-        <label class="layer-item"><input type="checkbox" id="l-heat" onchange="toggleHeat()"> 🌡️ 열지도 (도시열섬) <span style="font-size:9px;color:#455a64">(분석 후)</span></label>
+        <label class="layer-item"><input type="checkbox" id="l-sub" onchange="toggleSub()"> 🚌 대중교통 <span style="font-size:9px;color:#455a64">(분석 후 표시)</span></label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
-        <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">📡 정부 GIS 오버레이 (WMS)</div>
-        <label class="layer-item"><input type="checkbox" id="l-egis-eco" onchange="toggleEgisEco()"> 🌿 생태자연도 (환경부)</label>
-        <label class="layer-item"><input type="checkbox" id="l-forest" onchange="toggleForest()"> 🌲 임상도 (산림청)</label>
-        <label class="layer-item"><input type="checkbox" id="l-landcover" onchange="toggleLandcover()"> 🏞️ 토지피복도 (환경부)</label>
+        <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">📡 지도 오버레이</div>
         <label class="layer-item"><input type="checkbox" id="l-cadastral" onchange="toggleCadastral()"> 📐 지적편집도 (VWorld)</label>
-        <label class="layer-item"><input type="checkbox" id="l-ecvam" onchange="toggleEcvam()"> 🗺️ 환경성평가도 (국토부)</label>
-        <label class="layer-item"><input type="checkbox" id="l-ecozone" onchange="toggleEcozone()"> 🦋 생태보전지역 (환경부)</label>
-        <label class="layer-item"><input type="checkbox" id="l-ecobank-fish" onchange="toggleEcobank('fish')"> 🐟 생태조사_어류 (에코뱅크)</label>
-        <label class="layer-item"><input type="checkbox" id="l-ecobank-bird" onchange="toggleEcobank('bird')"> 🐦 생태조사_조류 (에코뱅크)</label>
-        <label class="layer-item"><input type="checkbox" id="l-ecobank-plant" onchange="toggleEcobank('plant')"> 🌿 생태조사_식물상 (에코뱅크)</label>
         <hr style="border-color:#1e3a4f;margin:6px 0;">
         <div style="font-size:10px;color:#546e7a;margin-bottom:4px;">베이스맵</div>
         <label class="layer-item"><input type="radio" name="bm" value="osm" checked onchange="changeBM('osm')"> 지도</label>
@@ -458,18 +446,6 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <div id="pickHint" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#0288d1ee;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;pointer-events:none;z-index:2000;text-align:center;backdrop-filter:blur(4px);">
       📍 분석할 위치를 클릭하세요<br><span style="font-size:10px;font-weight:400;opacity:.85">ESC 또는 버튼 재클릭으로 취소</span>
     </div>
-    <div id="heatLegend" style="display:none;background:#111c27cc;backdrop-filter:blur(4px);border:1px solid #1e3a4f;border-radius:8px;padding:8px 10px;font-size:10px;color:#b0bec5;">
-        <div style="font-weight:700;margin-bottom:5px;color:#e0e6ed;">🌡️ 도시열섬 강도</div>
-        <div style="display:flex;flex-direction:column;gap:3px;">
-          <div style="display:flex;align-items:center;gap:5px;"><div style="width:14px;height:10px;border-radius:2px;background:#b71c1c;"></div>매우 뜨거움</div>
-          <div style="display:flex;align-items:center;gap:5px;"><div style="width:14px;height:10px;border-radius:2px;background:#ff7043;"></div>뜨거움</div>
-          <div style="display:flex;align-items:center;gap:5px;"><div style="width:14px;height:10px;border-radius:2px;background:#ffb74d;"></div>보통</div>
-          <div style="display:flex;align-items:center;gap:5px;"><div style="width:14px;height:10px;border-radius:2px;background:#81c784;"></div>시원함</div>
-          <div style="display:flex;align-items:center;gap:5px;"><div style="width:14px;height:10px;border-radius:2px;background:#4fc3f7;"></div>매우 시원함</div>
-        </div>
-        <div style="margin-top:5px;color:#546e7a;font-size:9px;">녹지·수변: 시원 / 포장·건물: 뜨거움</div>
-      </div>
-
     <!-- 위치 확인 floating card -->
     <div id="locConfirm" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:2100;background:#1a2a3a;border:1.5px solid #0288d1;border-radius:14px;padding:14px 18px;min-width:280px;max-width:420px;box-shadow:0 4px 24px #000a;backdrop-filter:blur(8px);">
       <div style="display:flex;align-items:flex-start;gap:10px;">
@@ -502,7 +478,7 @@ const BM = {
   topo: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20})
 };
 BM.osm.addTo(map);
-let curBuf=null, curMarker=null, ecoLG=null, subLG=null, floodLG=null, heatLayer=null, speciesLG=null;
+let curBuf=null, curMarker=null, subLG=null;
 let pendingCoords=null, pendingAddress=null, previewMarker=null;
 const markerIcon = L.icon({iconUrl:'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAzNiI+PHBhdGggZmlsbD0iIzAyODhkMSIgZD0iTTEyIDAgQzUuNCAwIDAgNS40IDAgMTIgYzAgOS41IDEyIDI0IDEyIDI0czEyLTE0LjUgMTItMjQgYzAtNi42IC01LjQtMTIgLTEyLTEyeiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjUiIGZpbGw9IiNmZmYiLz48L3N2Zz4=',iconSize:[24,36],iconAnchor:[12,36],popupAnchor:[0,-36]});
 
@@ -511,75 +487,38 @@ function changeBM(t){Object.values(BM).forEach(m=>map.removeLayer(m));BM[t].addT
 function toggleBuf(){curBuf&&(document.getElementById('l-buf').checked?map.addLayer(curBuf):map.removeLayer(curBuf));}
 function flyHome(){curMarker&&map.flyTo(curMarker.getLatLng(),15,{duration:1.2});}
 
-function toggleEco(){
-  if(document.getElementById('l-eco').checked){
-    ecoLG=L.layerGroup(ECO_NODES.map(n=>
-      L.circleMarker([n.lat,n.lng],{radius:10,color:'#1e8449',fillColor:'#27ae60',fillOpacity:.7,weight:2})
-      .bindTooltip(n.name,{permanent:false,direction:'top',className:'map-label-eco',offset:[0,-4]})
-      .bindPopup(`<b>${n.name}</b><br>생태자연도 ${n.grade}등급`)
-    )).addTo(map);
-  }else if(ecoLG){map.removeLayer(ecoLG);ecoLG=null;}
-}
+// ── 대중교통 레이어 (OSM 분석 데이터 기반) ──────────────
 function toggleSub(){
-  if(document.getElementById('l-sub').checked){
-    subLG=L.layerGroup(SUBWAY.map(s=>
-      L.circleMarker([s.lat,s.lng],{radius:7,color:'#e91e63',fillColor:'#f48fb1',fillOpacity:.8,weight:2})
-      .bindTooltip(s.name+'역',{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
-      .bindPopup(`🚇 ${s.name}역`)
-    )).addTo(map);
+  const cb=document.getElementById('l-sub');
+  if(cb.checked){
+    if(!analysisResult||!analysisResult.osm){
+      cb.checked=false;
+      alert('먼저 입지 분석을 실행해 주세요.');
+      return;
+    }
+    if(subLG){map.addLayer(subLG);return;}
+    const stations=(analysisResult.osm.stations||[]);
+    const buses=(analysisResult.osm.buses||[]);
+    const markers=[];
+    stations.forEach(n=>{
+      const name=n.tags&&(n.tags['name:ko']||n.tags.name)||'역';
+      markers.push(L.circleMarker([n.lat,n.lon],{radius:7,color:'#e91e63',fillColor:'#f48fb1',fillOpacity:.85,weight:2})
+        .bindTooltip('🚇 '+name,{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
+        .bindPopup(`🚇 ${name}`));
+    });
+    buses.forEach(n=>{
+      const name=n.tags&&(n.tags['name:ko']||n.tags.name)||'정류장';
+      markers.push(L.circleMarker([n.lat,n.lon],{radius:5,color:'#ff9800',fillColor:'#ffcc80',fillOpacity:.8,weight:1.5})
+        .bindTooltip('🚌 '+name,{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
+        .bindPopup(`🚌 ${name}`));
+    });
+    if(markers.length===0){cb.checked=false;return;}
+    subLG=L.layerGroup(markers).addTo(map);
   }else if(subLG){map.removeLayer(subLG);subLG=null;}
 }
-function toggleFlood(){
-  if(document.getElementById('l-flood').checked){
-    floodLG=L.layerGroup(FLOOD_ZONES.map(f=>
-      L.circle([f.lat,f.lng],{radius:f.radius,color:'#0288d1',fillColor:'#0288d1',fillOpacity:.15,weight:1.5,dashArray:'4,3'})
-      .bindPopup(`<b>${f.name}</b><br>홍수 위험도: ${f.risk}`)
-    )).addTo(map);
-  }else if(floodLG){map.removeLayer(floodLG);floodLG=null;}
-}
-function toggleSpecies(){
-  if(!speciesLG){return;} // 분석 전에는 데이터 없음
-  document.getElementById('l-species').checked?map.addLayer(speciesLG):map.removeLayer(speciesLG);
-}
 
-// ── 정부 WMS 오버레이 ──────────────────────────────────
-let egisEcoLayer=null, forestLayer=null, landcoverLayer=null, cadastralLayer=null;
-
-function toggleEgisEco(){
-  if(document.getElementById('l-egis-eco').checked){
-    // 환경부 환경공간정보서비스 — 생태자연도 WMS
-    egisEcoLayer=L.tileLayer.wms(WORKER_URL+'/egis',{
-      layers:'me:NESIS_TOTAL',format:'image/png',transparent:true,
-      opacity:0.55,attribution:'© 환경부 EGIS 생태자연도',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('🌿 생태자연도 (환경부 EGIS)');
-  }else if(egisEcoLayer){map.removeLayer(egisEcoLayer);egisEcoLayer=null;}
-}
-
-function toggleForest(){
-  if(document.getElementById('l-forest').checked){
-    // 산림청 산림공간정보서비스 — 임상도 WMS
-    forestLayer=L.tileLayer.wms(WORKER_URL+'/forest-wms',{
-      layers:'LSIS:LC_SAN_LIMSANGDO_5',format:'image/png',transparent:true,
-      opacity:0.5,attribution:'© 산림청 산림공간정보',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('🌲 임상도 (산림청 fGIS)');
-  }else if(forestLayer){map.removeLayer(forestLayer);forestLayer=null;}
-}
-
-function toggleLandcover(){
-  if(document.getElementById('l-landcover').checked){
-    // 환경부 EGIS MCEE ArcGIS WMS — 토지피복도 (layer 0)
-    landcoverLayer=L.tileLayer.wms(WORKER_URL+'/egis-mcee/services/lc/MapServer/WmsServer',{
-      layers:'0',format:'image/png',transparent:true,
-      opacity:0.45,attribution:'© 환경부 EGIS 토지피복도',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('🏞️ 토지피복도 (환경부 EGIS)');
-  }else if(landcoverLayer){map.removeLayer(landcoverLayer);landcoverLayer=null;}
-}
+// ── 지도 오버레이 ──────────────────────────────────
+let cadastralLayer=null;
 
 function toggleCadastral(){
   if(document.getElementById('l-cadastral').checked){
@@ -597,52 +536,6 @@ function toggleCadastral(){
     ).addTo(map);
     showWMSToast('📐 지적편집도 (VWorld WMTS — 필지 경계)');
   }else if(cadastralLayer){map.removeLayer(cadastralLayer);cadastralLayer=null;}
-}
-
-let ecvamWmsLayer=null, ecozoneWmsLayer=null;
-function toggleEcvam(){
-  if(document.getElementById('l-ecvam').checked){
-    ecvamWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
-      layers:'lt_c_enveval_res',format:'image/png',transparent:true,
-      opacity:0.65,attribution:'© 국토환경성평가지도',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('🗺️ 환경성평가도 (국토부)');
-  }else if(ecvamWmsLayer){map.removeLayer(ecvamWmsLayer);ecvamWmsLayer=null;}
-}
-function toggleEcozone(){
-  if(document.getElementById('l-ecozone').checked){
-    ecozoneWmsLayer=L.tileLayer.wms(WORKER_URL+'/ecvam',{
-      layers:'lt_c_ecscnsrvatn',format:'image/png',transparent:true,
-      opacity:0.6,attribution:'© 환경부 생태보전지역',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    showWMSToast('🦋 생태보전지역 (환경부)');
-  }else if(ecozoneWmsLayer){map.removeLayer(ecozoneWmsLayer);ecozoneWmsLayer=null;}
-}
-
-// 에코뱅크 WMS 레이어 (nie-ecobank.kr — Worker /ecobank-wms 라우트 필요)
-const ECOBANK_LAYERS={
-  fish:'mv_map_ecpe_fishes_pyn',
-  bird:'mv_map_ecpe_birds_point',
-  plant:'mv_map_ecpe_flr_pyn'
-};
-const ECOBANK_LABELS={fish:'🐟 생태조사_어류',bird:'🐦 생태조사_조류',plant:'🌿 생태조사_식물상'};
-let ecobankWmsLayers={};
-function toggleEcobank(type){
-  const chk=document.getElementById(`l-ecobank-${type}`);
-  if(chk.checked){
-    const layer=L.tileLayer.wms(WORKER_URL+'/ecobank-wms',{
-      layers:ECOBANK_LAYERS[type],format:'image/png',transparent:true,
-      opacity:0.65,attribution:'© 국립생태원 에코뱅크',
-      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
-    }).addTo(map);
-    ecobankWmsLayers[type]=layer;
-    showWMSToast(ECOBANK_LABELS[type]+' (에코뱅크)');
-  }else if(ecobankWmsLayers[type]){
-    map.removeLayer(ecobankWmsLayers[type]);
-    delete ecobankWmsLayers[type];
-  }
 }
 
 function showWMSToast(name){
@@ -731,70 +624,6 @@ map.on('click',async function(e){
   // 직접 클릭한 좌표로 분석 (geocode 생략)
   runAnalysisAt({lat,lng,name:addrField.value});
 });
-
-// ── 열지도 (도시열섬 Urban Heat Island) ──────────────────
-function generateHeatData(lat,lng,eco,lsc,water){
-  const rng=seededRng(lat,lng,999);
-  const pts=[];
-  const step=0.0015; // ~150m 격자
-  const range=7;     // 7칸 = ~1km 반경
-  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
-const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
-  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
-  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
-  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
-));
-  for(let dlat=-range;dlat<=range;dlat++){
-    for(let dlng=-range;dlng<=range;dlng++){
-      const plat=lat+dlat*step;
-      const plng=lng+dlng*step;
-      // 기본 열 강도
-      let heat=0.38+rng()*0.28;
-      // 수변/공원 → 냉각
-      const onRiver=(plat>37.49&&plat<37.56&&plng>126.82&&plng<127.20);
-      if(onRiver) heat-=0.28;
-      // 생태자연도 높을수록 시원
-      heat-=(5-eco.grade)*0.04;
-      // 수목피복률 높을수록 시원
-      heat-=(eco.treeCov/100)*0.22;
-      // 생태면적률 높을수록 시원
-      heat-=lsc.bar*0.18;
-      // 불투수율 높을수록 뜨거움
-      heat+=(lsc.impervious/100)*0.22;
-      // 홍수위험지역(저지대)은 상대적으로 시원
-      if(water.floodRisk==='높음') heat-=0.08;
-      // 랜덤 노이즈
-      heat+=(rng()-0.5)*0.12;
-      pts.push([plat,plng,Math.max(0,Math.min(1,heat))]);
-    }
-  }
-  return pts;
-}
-
-function toggleHeat(){
-  const cb=document.getElementById('l-heat');
-  if(cb.checked){
-    if(!analysisResult){
-      cb.checked=false;
-      alert('먼저 입지 분석을 실행하면 해당 지점 기준으로 열지도가 그려집니다.');
-      return;
-    }
-    const {coords:c,ecology:eco,landscape:lsc,water}=analysisResult;
-    const pts=generateHeatData(c.lat,c.lng,eco,lsc,water);
-    heatLayer=L.heatLayer(pts,{
-      radius:38,
-      blur:18,
-      maxZoom:18,
-      max:0.7,
-      minOpacity:0.45,
-      gradient:{0.0:'#2196f3',0.3:'#4caf50',0.5:'#ffeb3b',0.7:'#ff9800',0.85:'#f44336',1.0:'#880e4f'}
-    }).addTo(map);
-    document.getElementById('heatLegend').style.display='block';
-  }else if(heatLayer){
-    map.removeLayer(heatLayer);heatLayer=null;
-    document.getElementById('heatLegend').style.display='none';
-  }
-}
 
 // ════════════════════════════════════════════
 // 유틸리티
@@ -1376,14 +1205,6 @@ async function _doAnalysis(address, coords){
     }
     analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
-    if(heatLayer){map.removeLayer(heatLayer);heatLayer=null;}
-    if(document.getElementById('l-heat')&&document.getElementById('l-heat').checked){
-      const {coords:c2,ecology:eco2,landscape:lsc2,water:w2}=analysisResult;
-      heatLayer=L.heatLayer(generateHeatData(c2.lat,c2.lng,eco2,lsc2,w2),{
-        radius:38,blur:18,maxZoom:18,max:0.7,minOpacity:0.45,
-        gradient:{0.0:'#2196f3',0.3:'#4caf50',0.5:'#ffeb3b',0.7:'#ff9800',0.85:'#f44336',1.0:'#880e4f'}
-      }).addTo(map);
-    }
     renderResults(analysisResult);
   } catch(e) {
     clearInterval(timer);ld.style.display='none';btn.disabled=false;
@@ -1734,7 +1555,7 @@ function processOSMData(osmData, c) {
     treeCov, hasWetland, hasNaturalWood, hasMajorRiver, hasStream,
     naturalPct, waterPct, artificialGreen, impervious, permeable, bar,
     ecoGrade, nearestStation, nearestStationDist: Math.round(nearestStationDist),
-    busCount, dominantZone, zoneTypes,
+    busCount, dominantZone, zoneTypes, stations: stationNodes, buses: busNodes,
     hasNearStation, greenWays, buildingWays, waterWays,
     // 명칭 있는 주변 피처 (보고서 표시용)
     namedWaterways: uniqueNames(namedWaterways),
@@ -2302,11 +2123,9 @@ function buildTraffic(c,osm,realBus,sgisPop){
     buses=realBus?realBus.count:osm.busCount;
     busSource=realBus?'real_api':'osm';
   }else{
-    const dists=SUBWAY.map(s=>({d:dist(c.lat,c.lng,s.lat,s.lng),name:s.name}));
-    dists.sort((a,b)=>a.d-b.d);
-    subDist=Math.round(dists[0].d);subName=dists[0].name;
-    buses=realBus?realBus.count:null; // null = 데이터 없음
-    busSource=realBus?'real_api':'unknown';
+    subDist=9999; subName='반경 3km 외';
+    buses=osm?osm.busCount:(realBus?realBus.count:null);
+    busSource=osm?'osm':(realBus?'real_api':'unknown');
   }
   const bike=osm?osm.hasBikeway:false; // OSM 실측
   let acc=100;
@@ -2393,7 +2212,13 @@ const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
     3:[{name:'왜가리',icon:'🦢',status:'일반종',risk:'low'},{name:'백로',icon:'🕊️',status:'일반종',risk:'low'}]
   };
   let species=[];
-  if(grade<=2){const pool=[...(specPool[grade]||[]),...(specPool[3]||[])];const n=Math.min(2,pool.length);for(let i=0;i<n;i++)species.push(pool[Math.floor(rng()*pool.length)]);}
+  if(grade<=2){
+    const pool=[...(specPool[grade]||[]),...(specPool[3]||[])];
+    // 중복 없이 pick — Fisher-Yates shuffle 앞 n개
+    const shuffled=pool.slice();
+    for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
+    species=shuffled.slice(0,Math.min(2,shuffled.length));
+  }
   if(nearHan)species.push({name:'갈매기류',icon:'🐦',status:'겨울철새',risk:'low'});
 
   const hasWetland=(nearHan&&rng()<0.55)||(grade<=2&&rng()<0.3);
@@ -2544,9 +2369,8 @@ function getUrban(c){
 
 function getTraffic(c){
   const {lat,lng}=c; const rng=seededRng(lat,lng,4);
-  const dists=SUBWAY.map(s=>({d:dist(lat,lng,s.lat,s.lng),name:s.name}));
-  dists.sort((a,b)=>a.d-b.d);
-  const subDist=Math.round(dists[0].d), subName=dists[0].name;
+  // OSM 없는 경우 시뮬레이션 (역 좌표 DB 제거됨)
+  const subDist=rndInt(rng,200,2000), subName='(OSM 조회 필요)';
   const buses=rndInt(rng,1,10), peds=rndInt(rng,300,60000);
   const bike=rng()<0.45;
   let acc=100;
@@ -3592,39 +3416,34 @@ function updateMap(d){
   const {lat,lng}=d.coords, r=d.radius;
   if(curMarker)map.removeLayer(curMarker);
   if(curBuf)map.removeLayer(curBuf);
-  // 이전 서식종 레이어 제거
-  if(speciesLG){map.removeLayer(speciesLG);speciesLG=null;}
+  // 이전 대중교통 레이어 제거 (새 분석 위치로 갱신)
+  if(subLG){map.removeLayer(subLG);subLG=null;}
 
   curBuf=L.circle([lat,lng],{radius:r,color:'#4fc3f7',fillColor:'#4fc3f7',fillOpacity:.07,weight:2,dashArray:'6,4'}).addTo(map);
   curMarker=L.marker([lat,lng],{icon:markerIcon}).addTo(map)
     .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:160px;"><b style="color:#0288d1">📍 분석 지점</b><br><small>${d.coords.name}</small><br><br><b>종합 점수: ${d.analysis.overall}점</b><br><small>권장: ${d.analysis.rec}</small></div>`)
     .openPopup();
 
-  // ── 서식종 마커 (NIBR/경기도 실측 데이터) ──────────────
-  const realSpecies=(d.ecology&&d.ecology.species?d.ecology.species:[]).filter(s=>!s.simulated);
-  if(realSpecies.length>0){
-    const markers=realSpecies.map((s,i)=>{
-      // 분석 중심 기준 방사형 80m 반경에 균등 배치
-      const angle=(i/realSpecies.length)*Math.PI*2;
-      const offsetM=80;
-      const dLat=offsetM/111320;
-      const dLng=offsetM/(111320*Math.cos(lat*Math.PI/180));
-      const sLat=lat+dLat*Math.sin(angle);
-      const sLng=lng+dLng*Math.cos(angle);
-      const riskColor=s.risk==='critical'?'#ef5350':s.risk==='high'?'#ff9800':'#66bb6a';
-      return L.circleMarker([sLat,sLng],{
-        radius:9,color:riskColor,fillColor:riskColor,fillOpacity:.85,weight:2
-      })
-      .bindTooltip(`${s.icon||'🔴'} ${s.name}`,{permanent:false,direction:'top',className:'map-label-species',offset:[0,-4]})
-      .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:140px"><b>${s.icon||'🔴'} ${s.name}</b><br><span style="color:#ff9800;font-size:11px">${s.status}</span><br><small style="color:#78909c">NIBR 실측 서식 확인</small></div>`);
+  // ── 대중교통 마커 (OSM 실데이터) ──────────────
+  const stations=(d.osm&&d.osm.stations)||[];
+  const buses=(d.osm&&d.osm.buses)||[];
+  if(stations.length>0||buses.length>0){
+    const markers=[];
+    stations.forEach(n=>{
+      const name=n.tags&&(n.tags['name:ko']||n.tags.name)||'역';
+      markers.push(L.circleMarker([n.lat,n.lon],{radius:7,color:'#e91e63',fillColor:'#f48fb1',fillOpacity:.85,weight:2})
+        .bindTooltip('🚇 '+name,{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
+        .bindPopup(`🚇 ${name}`));
     });
-    speciesLG=L.layerGroup(markers).addTo(map);
-    // 체크박스 동기화
-    const cb=document.getElementById('l-species');
-    if(cb)cb.checked=true;
-  }else{
-    const cb=document.getElementById('l-species');
-    if(cb)cb.checked=false;
+    buses.forEach(n=>{
+      const name=n.tags&&(n.tags['name:ko']||n.tags.name)||'정류장';
+      markers.push(L.circleMarker([n.lat,n.lon],{radius:5,color:'#ff9800',fillColor:'#ffcc80',fillOpacity:.8,weight:1.5})
+        .bindTooltip('🚌 '+name,{permanent:false,direction:'top',className:'map-label-sub',offset:[0,-4]})
+        .bindPopup(`🚌 ${name}`));
+    });
+    subLG=L.layerGroup(markers);
+    const cbSub=document.getElementById('l-sub');
+    if(cbSub&&cbSub.checked) map.addLayer(subLG);
   }
 
   map.flyTo([lat,lng],15,{duration:1.5});
@@ -3894,7 +3713,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 미연동)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">미연동</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
@@ -3935,7 +3754,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— (농진청 미연동)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">미연동</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
@@ -3983,11 +3802,11 @@ function renderResults(d){
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>
-        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25!=null?`${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}`:badge('미연동','grey')}</span></div>
-        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal!=null?`${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}`:badge('미연동','grey')}</span></div>
+        <div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25!=null?`${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}`:'<span style="color:#455a64;font-size:11px">— (Worker AIRKOREA_KEY 필요)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal!=null?`${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}`:'<span style="color:#455a64;font-size:11px">— (Worker AIRKOREA_KEY 필요)</span>'}</span></div>
         ${[...soil.implications,...(air.pm25!=null||air.noiseReal!=null?air.implications:[])].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         <div class="source-row">${air.reliability==='real'?`● 실시간 (${air.source}${air.station?' · '+air.station:''})`:badge('에어코리아 미연동','grey')+' <span style="font-size:10px;color:#546e7a">Worker AIRKOREA_KEY 미설정</span>'}</div>
-        ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:'<div class="source-row">'+badge('소음측정망 미연동','grey')+'</div>'}
+        ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:''}
         <div class="source-row">⬡ ${soil.source}</div>
       </div>
 
@@ -3998,10 +3817,10 @@ function renderResults(d){
         ${urb.nedRoadSide?`<div class="data-row"><span class="data-key">도로접면</span><span class="data-val">${urb.nedRoadSide==='맹지'?badge('맹지','red'):urb.nedRoadSide}</span></div>`:''}
         ${urb.nedTerrainH?`<div class="data-row"><span class="data-key">지형높이</span><span class="data-val">${urb.nedTerrainH}${urb.nedTerrainF?` · ${urb.nedTerrainF}`:''}</span></div>`:''}
 
-        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist}m (${trf.subName.endsWith('역')?trf.subName:trf.subName+'역'})</span></div>
-        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소':badge('미연동','grey')}</span></div>
+        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist>=9999?'<span style="color:#546e7a">3km 내 없음 (OSM 조회 기준)</span>':trf.subDist+'m ('+( trf.subName.endsWith('역')?trf.subName:trf.subName+'역')+')'}</span></div>
+        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소 (반경 내 OSM)':`<span style="color:#455a64;font-size:11px">— (OSM 조회 불가)</span>`}</span></div>
         <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds!=null?`${trf.peds.toLocaleString()}명 (SGIS 생활인구 낮) — ${trf.pedLv}`:badge('SGIS 미연동','grey')}</span></div>
+        <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds!=null?`${trf.peds.toLocaleString()}명 (SGIS 생활인구 낮) — ${trf.pedLv}`:'<span style="color:#455a64;font-size:11px">— (Worker SGIS_KEY 필요)</span>'}</span></div>
         <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}</span></div>
         ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
         ${[...urb.implications,...trf.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
@@ -4025,7 +3844,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 수계 · 수질 ──</div>
         <div class="data-row"><span class="data-key">수계 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):water.hasSurface?badge('소하천 인접','blue'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">${water.wqGrade&&water.wqReliability==='real'?`Ⅰ~Ⅴ중 ${water.wqGrade}등급 <span style="font-size:10px;color:#78909c">(${water.wqText||''})</span>`:badge('현장 수질 조사 필요','grey')}</span></div>
+        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">${water.wqGrade&&water.wqReliability==='real'?`Ⅰ~Ⅴ중 ${water.wqGrade}등급 <span style="font-size:10px;color:#78909c">(${water.wqText||''})</span>`:water.hasSurface?'<span style="color:#546e7a;font-size:11px">인근 하천 있음 — 수질API 미연동</span>':'<span style="color:#546e7a;font-size:11px">—</span>'}</span></div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs&&cs.annualPrecip?cs.annualPrecip.toLocaleString()+'mm <span style="font-size:10px;color:#81c784">● 실측</span>':'<span style="color:#546e7a">— (기후 탭 연동 후 표시)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 관개 가능성 ──</div>
@@ -4617,68 +4436,6 @@ const ECO_NODES=[
   // 제주
   {lat:33.361,lng:126.529,grade:1,name:'한라산 국립공원 핵심구역'},{lat:33.450,lng:126.940,grade:1,name:'성산일출봉 천연보호구역'},
   {lat:33.530,lng:126.630,grade:1,name:'제주 동백동산 람사르 습지'}
-];
-const SUBWAY=[
-  // 서울
-  {name:'서울역',lat:37.555,lng:126.972},{name:'강남',lat:37.497,lng:127.028},{name:'홍대입구',lat:37.557,lng:126.924},
-  {name:'여의도',lat:37.521,lng:126.924},{name:'신도림',lat:37.509,lng:126.891},{name:'잠실',lat:37.513,lng:127.100},
-  {name:'사당',lat:37.476,lng:126.981},{name:'왕십리',lat:37.561,lng:127.037},{name:'건대입구',lat:37.540,lng:127.070},
-  {name:'종로3가',lat:37.571,lng:126.992},{name:'시청',lat:37.565,lng:126.977},{name:'합정',lat:37.550,lng:126.915},
-  {name:'노원',lat:37.655,lng:127.061},{name:'신림',lat:37.484,lng:126.930},{name:'천호',lat:37.538,lng:127.124},
-  // 부산
-  {name:'서면',lat:35.157,lng:129.059},{name:'해운대',lat:35.163,lng:129.163},{name:'부산역',lat:35.114,lng:129.040},
-  {name:'남포',lat:35.097,lng:129.031},{name:'동래',lat:35.205,lng:129.085},{name:'덕포',lat:35.119,lng:128.978},
-  {name:'사직',lat:35.177,lng:129.052},{name:'경성대',lat:35.139,lng:129.101},
-  // 대구
-  {name:'반월당',lat:35.868,lng:128.597},{name:'동대구',lat:35.878,lng:128.628},{name:'대구역',lat:35.878,lng:128.595},
-  {name:'수성못',lat:35.853,lng:128.633},{name:'두류',lat:35.853,lng:128.563},
-  // 인천
-  {name:'부평',lat:37.490,lng:126.722},{name:'주안',lat:37.470,lng:126.706},{name:'인천',lat:37.454,lng:126.706},
-  {name:'계산',lat:37.537,lng:126.723},{name:'구월동',lat:37.455,lng:126.731},{name:'인천국제공항',lat:37.449,lng:126.451},
-  // 광주
-  {name:'상무',lat:35.152,lng:126.851},{name:'금남로4가',lat:35.147,lng:126.916},{name:'광주송정',lat:35.139,lng:126.793},
-  {name:'돌고개',lat:35.178,lng:126.878},
-  // 대전
-  {name:'대전역',lat:36.332,lng:127.434},{name:'판암',lat:36.319,lng:127.460},{name:'서대전네거리',lat:36.330,lng:127.404},
-  {name:'유성온천',lat:36.363,lng:127.357},
-  // 경기/수도권 광역
-  {name:'수원',lat:37.266,lng:127.000},{name:'분당',lat:37.370,lng:127.115},{name:'판교',lat:37.395,lng:127.111},
-  {name:'일산',lat:37.662,lng:126.770},{name:'안양',lat:37.392,lng:126.955},{name:'성남',lat:37.436,lng:127.138},
-  {name:'의정부',lat:37.738,lng:127.044},{name:'인덕원',lat:37.389,lng:126.985},{name:'청량리',lat:37.580,lng:127.047},
-  // 경의중앙선·중앙선 (양수리·팔당·양평 방면)
-  {name:'양수',lat:37.531,lng:127.447},{name:'신원',lat:37.511,lng:127.425},{name:'국수',lat:37.545,lng:127.477},
-  {name:'아신',lat:37.560,lng:127.499},{name:'양평',lat:37.492,lng:127.494},{name:'용문',lat:37.536,lng:127.617},
-  {name:'팔당',lat:37.531,lng:127.369},{name:'운길산',lat:37.558,lng:127.339},{name:'도심',lat:37.566,lng:127.314},
-  {name:'덕소',lat:37.566,lng:127.297},{name:'도농',lat:37.601,lng:127.171},{name:'양정',lat:37.595,lng:127.154},
-  {name:'구리',lat:37.598,lng:127.130},{name:'화랑대',lat:37.617,lng:127.099},
-  // 지방 KTX/주요역 (지하철 없는 도시 fallback)
-  {name:'광명',lat:37.479,lng:126.867},{name:'천안아산',lat:36.798,lng:127.104},{name:'오송',lat:36.624,lng:127.306},
-  {name:'공주',lat:36.447,lng:127.128},{name:'익산',lat:35.952,lng:126.957},{name:'전주',lat:35.818,lng:127.154},
-  {name:'광주송정(KTX)',lat:35.139,lng:126.793},{name:'나주',lat:35.019,lng:126.711},{name:'목포',lat:34.810,lng:126.393},
-  {name:'여수엑스포',lat:34.751,lng:127.754},{name:'순천',lat:34.941,lng:127.487},{name:'울산(KTX)',lat:35.543,lng:129.352},
-  {name:'포항',lat:35.985,lng:129.357},{name:'경주',lat:35.841,lng:129.209},{name:'구미',lat:36.119,lng:128.344},
-  {name:'김천구미',lat:36.040,lng:128.074},{name:'동대구',lat:35.878,lng:128.628},{name:'마산',lat:35.184,lng:128.574},
-  {name:'창원중앙',lat:35.260,lng:128.639},{name:'진주',lat:35.176,lng:128.097},{name:'제주',lat:33.499,lng:126.531},
-  {name:'서귀포',lat:33.254,lng:126.563},{name:'강릉',lat:37.752,lng:128.879},{name:'원주',lat:37.342,lng:127.921},
-  {name:'춘천',lat:37.880,lng:127.728},{name:'청주',lat:36.640,lng:127.489},{name:'충주',lat:36.991,lng:127.926},
-  {name:'전주(완산)',lat:35.823,lng:127.148},{name:'군산',lat:35.967,lng:126.736},{name:'여수',lat:34.752,lng:127.743}
-];
-const FLOOD_ZONES=[
-  {lat:37.515,lng:126.920,radius:800,name:'여의도 저지대',risk:'중간'},{lat:37.505,lng:126.975,radius:600,name:'반포대교 하류',risk:'높음'},
-  {lat:37.485,lng:127.030,radius:700,name:'강동 저지대',risk:'중간'},{lat:37.560,lng:126.970,radius:500,name:'광화문 침수 우려',risk:'낮음'},
-  // 경기/인천
-  {lat:37.400,lng:126.910,radius:900,name:'안양천 합류부 저지대',risk:'높음'},{lat:37.480,lng:126.890,radius:700,name:'목감천 범람원',risk:'중간'},
-  {lat:37.620,lng:126.870,radius:600,name:'굴포천 수해지역 (인천)',risk:'높음'},
-  // 부산
-  {lat:35.160,lng:129.070,radius:600,name:'온천천 범람원 (부산)',risk:'중간'},{lat:35.090,lng:129.050,radius:500,name:'부산역 일대 저지대',risk:'낮음'},
-  {lat:35.190,lng:128.980,radius:700,name:'맥도강 합류부',risk:'높음'},
-  // 대구
-  {lat:35.870,lng:128.600,radius:500,name:'신천 합류 저지대',risk:'중간'},{lat:35.810,lng:128.530,radius:600,name:'금호강 범람원',risk:'높음'},
-  // 전라/충청
-  {lat:35.820,lng:127.110,radius:800,name:'전주천 홍수구역',risk:'중간'},{lat:35.960,lng:126.710,radius:900,name:'만경강 저지대',risk:'높음'},
-  {lat:36.300,lng:127.400,radius:600,name:'갑천 합류부 (대전)',risk:'중간'},{lat:36.780,lng:127.000,radius:700,name:'아산만 배후 저지대',risk:'중간'},
-  // 강원
-  {lat:37.750,lng:128.870,radius:800,name:'남대천 범람원 (강릉)',risk:'높음'},{lat:37.880,lng:127.720,radius:600,name:'공지천 저지대 (춘천)',risk:'낮음'}
 ];
 
 let analysisResult=null;
