@@ -1103,24 +1103,32 @@ async function _doAnalysis(address, coords){
         status:'partial',verifyUrl:'https://www.foodsafetykorea.go.kr/',verifyLabel:'식품안전나라 확인'});
     }
 
-    // ── 서식종: NIBR(전국) + 경기도 보호종/보호수(경기도 한정) 병렬 조회 ──
-    const [realSpecies, ggProtected] = await Promise.allSettled([
+    // ── 서식종: 에코뱅크(1순위) + NIBR(2순위) + 경기도 보호종 병렬 조회 ──
+    const [ecobankSpecies, realSpecies, ggProtected] = await Promise.allSettled([
+      getRealSpeciesEcobank(coords),
       getRealSpeciesNIBR(coords),
       getGyeonggiProtected(coords, address)
     ]);
-    const speciesData = realSpecies.value || ggProtected.value;
+    const speciesData = ecobankSpecies.value || realSpecies.value || ggProtected.value;
     if(speciesData&&speciesData.species.length>0){
       ecology.species=[...speciesData.species,...ecology.species.filter(s=>
         !speciesData.species.some(r=>r.name===s.name)
       )].slice(0,6);
-      ecology.source=`실제 (OpenStreetMap + ${speciesData.source.includes('NIBR')?'국립생물자원관':'경기도 공공데이터'})`;
-      const apiLabel=speciesData.source.includes('NIBR')?'NIBR':'경기도';
-      dataLog.push({category:`서식·보호종 (${apiLabel})`,icon:'🦎',
+      // 에코뱅크 습지·식생 확인 결과 ecology 보강
+      if(speciesData.hasWetlandReal) ecology.hasWetland=true;
+      if(speciesData.vegType) ecology.vegType=speciesData.vegType;
+      const srcLabel=speciesData.source.includes('에코뱅크')?'에코뱅크':
+                     speciesData.source.includes('NIBR')?'NIBR':'경기도';
+      ecology.source=`실제 (OSM + ${speciesData.source.includes('에코뱅크')?'국립생태원 에코뱅크':speciesData.source.includes('NIBR')?'국립생물자원관':'경기도 공공데이터'})`;
+      dataLog.push({category:`서식·보호종 (${srcLabel})`,icon:'🦎',
         api:speciesData.source,
-        note:`${speciesData.species.length}종/그루 확인`,
+        note:`${speciesData.species.length}종/유형 확인 (현장조사 데이터)`,
         values:speciesData.species.map(s=>`${s.icon}${s.name}(${s.status})`).join(', '),
-        status:'real',verifyUrl:speciesData.source.includes('NIBR')?'https://species.nibr.go.kr/':'https://openapi.gg.go.kr/',
-        verifyLabel:speciesData.source.includes('NIBR')?'국립생물자원관 확인':'경기도 공공데이터 확인'});
+        status:'real',
+        verifyUrl:speciesData.source.includes('에코뱅크')?'https://www.nie-ecobank.kr/':
+                  speciesData.source.includes('NIBR')?'https://species.nibr.go.kr/':'https://openapi.gg.go.kr/',
+        verifyLabel:speciesData.source.includes('에코뱅크')?'국립생태원 에코뱅크 확인':
+                    speciesData.source.includes('NIBR')?'국립생물자원관 확인':'경기도 공공데이터 확인'});
     }
     
     // ── 생태자연도 실제 등급 조회 (PNU → emdCd 8자리) ──
@@ -5204,6 +5212,102 @@ async function getRealSoilContamination(address){
       source:`실제 (식품안전나라 토양실태조사 ${examYr}년)`, reliability:'real'
     };
   }catch(e){console.warn('토양오염도 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// 실제 API: 국립생태원 에코뱅크 WMS — 현장조사 서식종
+// 레이어: 생태계정밀조사(식생·식물상·조류·포유류·양서파충류) + 습지내륙_면
+// Worker: /ecobank-wms (ECOBANK_KEY 자동 주입)
+// ════════════════════════════════════════════
+async function getRealSpeciesEcobank(c){
+  if(!AVAIL.ecobank) return null;
+  try{
+    const species=[];
+    let hasWetlandReal=false, vegType=null;
+
+    // ① 면 레이어 — 사이트가 조사구역 내부인지 (좁은 bbox)
+    const d1=0.0005; // ~50m 포인트 인터섹션
+    const bbox1=`${c.lng-d1},${c.lat-d1},${c.lng+d1},${c.lat+d1}`;
+
+    // 습지_내륙_면 2022
+    try{
+      const url=`${WORKER_URL}/ecobank-wms?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+        `&LAYERS=mv_map_wtl_inland_pyn_2022&QUERY_LAYERS=mv_map_wtl_inland_pyn_2022`+
+        `&BBOX=${bbox1}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326&INFO_FORMAT=application/json`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
+      const text=await r.text();
+      if(text&&!text.trim().startsWith('<')){
+        const d2=JSON.parse(text);
+        if((d2.features||[]).length>0){
+          hasWetlandReal=true;
+          const p=d2.features[0].properties||{};
+          console.log('🌊 에코뱅크 습지_면 속성:',JSON.stringify(p).slice(0,300));
+          const nm=p.wtl_nm||p.WTL_NM||p.name||p.NAME||'내륙습지';
+          species.push({name:nm,icon:'🌊',status:'내륙습지 (에코뱅크 2022)',risk:'critical'});
+        }
+      }
+    }catch(e){console.warn('에코뱅크 습지_면 오류:',e.message);}
+
+    // 생태계정밀조사_식생_면
+    try{
+      const url=`${WORKER_URL}/ecobank-wms?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+        `&LAYERS=mv_map_ecpe_vtn_pyn&QUERY_LAYERS=mv_map_ecpe_vtn_pyn`+
+        `&BBOX=${bbox1}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326&INFO_FORMAT=application/json`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
+      const text=await r.text();
+      if(text&&!text.trim().startsWith('<')){
+        const d2=JSON.parse(text);
+        const features=d2.features||[];
+        if(features.length>0){
+          const p=features[0].properties||{};
+          console.log('🌿 에코뱅크 식생_면 속성:',JSON.stringify(p).slice(0,300));
+          const nm=p.vtn_nm||p.VTN_NM||p.korean_nm||p.kor_nm||p.sci_nm||'';
+          if(nm){vegType=nm;species.push({name:nm,icon:'🌿',status:'생태계정밀조사 식생군락',risk:'survey'});}
+        }
+      }
+    }catch(e){console.warn('에코뱅크 식생_면 오류:',e.message);}
+
+    // ② 점 레이어 — 반경 약 1km 이내 종 기록
+    const d3=0.009; // ~900m bbox
+    const bbox3=`${c.lng-d3},${c.lat-d3},${c.lng+d3},${c.lat+d3}`;
+    const ptLayers=[
+      {layer:'mv_map_ntee_birds_point',  icon:'🦅',label:'조류'},
+      {layer:'mv_map_ntee_mml_point',    icon:'🦊',label:'포유류'},
+      {layer:'mv_map_ntee_flr_point',    icon:'🌱',label:'식물상'},
+      {layer:'mv_map_ecpe_amnrp_point',  icon:'🐸',label:'양서파충류'},
+      {layer:'mv_map_ecpe_birds_point',  icon:'🦅',label:'조류(정밀)'},
+    ];
+    for(const {layer,icon,label} of ptLayers){
+      if(species.length>=7) break;
+      try{
+        const url=`${WORKER_URL}/ecobank-wms?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
+          `&LAYERS=${layer}&QUERY_LAYERS=${layer}`+
+          `&BBOX=${bbox3}&WIDTH=21&HEIGHT=21&X=10&Y=10&SRS=EPSG:4326&INFO_FORMAT=application/json`;
+        const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+        const text=await r.text();
+        if(!text||text.trim().startsWith('<')) continue;
+        const d2=JSON.parse(text);
+        const features=d2.features||[];
+        if(!features.length) continue;
+        console.log(`🔍 에코뱅크 ${label} 속성:`,JSON.stringify(features[0].properties||{}).slice(0,300));
+        features.slice(0,2).forEach(f=>{
+          const p=f.properties||{};
+          // 다양한 속성명 시도 (GeoServer 레이어마다 상이)
+          const nm=p.korean_nm||p.kname||p.korean_name||p.kor_nm||p.k_nm||
+                   p.sci_nm||p.sname||p.species_nm||p.name||p.NAME||'';
+          if(nm&&!species.some(s=>s.name===nm))
+            species.push({name:nm,icon,status:`자연환경조사 (${label})`,risk:'survey'});
+        });
+      }catch(e){console.warn(`에코뱅크 ${label} 오류:`,e.message);}
+    }
+
+    if(!species.length) return null;
+    return{
+      species:species.slice(0,6),
+      hasWetlandReal,vegType,
+      source:'실제 (국립생태원 에코뱅크 현장조사)',reliability:'real'
+    };
+  }catch(e){console.warn('에코뱅크 종합 오류:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
