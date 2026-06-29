@@ -1682,7 +1682,7 @@ async function getKMAClimateSummary(c){
         const t=line.trim().replace(/=+$/, '').trim();
         if(!t) continue;
         if(t.startsWith('#')){
-          // 마지막 # 줄에서 필드명 추출
+          // 마지막 # 줄에서 필드명 추출 (공백 구분 헤더)
           const candidate=t.replace(/^#+\s*/,'').trim();
           const parts=candidate.split(/\s+/).filter(Boolean);
           // 대소문자 무관, 첫 토큰이 영문+숫자+_ 조합이면 헤더로 인정
@@ -1690,7 +1690,8 @@ async function getKMAClimateSummary(c){
             headers=parts.map(p=>p.toUpperCase()); // 대문자 정규화
           }
         } else {
-          const vals=t.split(/\s+/).filter(Boolean);
+          // 데이터 행: 콤마 구분 우선, 없으면 공백 구분 (KMA 실 응답은 콤마 구분)
+          const vals=t.includes(',')?t.split(',').map(v=>v.trim()).filter(v=>v!==''):t.split(/\s+/).filter(Boolean);
           if(vals.length>3){
             const row={};
             if(headers.length>0){
@@ -1712,10 +1713,11 @@ async function getKMAClimateSummary(c){
     // stn_id 지정 시 컬럼: YEAR STN_ID LAT LON ALTD TA_YAVG TMX OCDT_TA_MAX TA_DAVG_MAX OCDT_TA_DAVG_MAX TMN ...
     //                       [0]   [1]   [2] [3]  [4]   [5]   [6]      [7]          [8]           [9]      [10]
     let annualMean=null, annualMax=null, annualMin=null, absMin=null;
+    let taTxt=null; // clone() 버그 방지 — 읽은 텍스트 보관
     if(taRes.status==='fulfilled'){
-      const txt=await taRes.value.text();
-      console.log('📡 KMA 기온 연자료 앞 300자:',txt.slice(0,300));
-      const rows=parseKMA(txt);
+      taTxt=await taRes.value.text();
+      console.log('📡 KMA 기온 연자료 앞 300자:',taTxt.slice(0,300));
+      const rows=parseKMA(taTxt);
       // 필드명 기반 우선, 실패 시 인덱스 폴백 (DST 없으므로 col5~12)
       // 실제 컬럼: YEAR(0) STN(1) LAT(2) LON(3) ALTD(4) TA_YAVG(5) TMX_YAVG(6) TMN_YAVG(7) TMX(8) OCDT(9) TA_DAVG_MAX(10) OCDT(11) TMN(12)
       const getCol=(r,field,idx)=>{
@@ -1735,9 +1737,8 @@ async function getKMAClimateSummary(c){
       if(yearMins.length)    absMin    =+Math.min(...yearMins).toFixed(1);
     }
     if(annualMean===null){
-      if(taRes.status==='fulfilled'){
-        const dbgTxt=await taRes.value.clone().text().catch(()=>'(read error)');
-        console.warn('KMA 기온 파싱 실패 — 응답 앞 500자:', dbgTxt.slice(0,500));
+      if(taTxt!==null){
+        console.warn('KMA 기온 파싱 실패 — 응답 앞 500자:', taTxt.slice(0,500));
       } else {
         console.warn('KMA 기온 fetch 실패:', taRes.reason);
       }
@@ -5714,8 +5715,9 @@ async function getRealLandcover(c){
     }catch(e){console.warn('VWorld 토지이용현황 실패:',e.message);}
   }
 
-  // ─── ② 환경부 EGIS MCEE ArcGIS REST identify (토지피복도) ───────────────────────
-  try{
+  // ─── ② 환경부 EGIS MCEE ArcGIS REST — 구 egis.me.go.kr 서비스 종료로 제거됨 ──────
+  // api.mcee.go.kr은 GeoServer 기반으로 변경 → ③ WMS GetFeatureInfo 사용
+  if(false){ // disabled: ArcGIS REST 서비스 종료 (401 Unauthorized)
     const ext=`${c.lng-0.001},${c.lat-0.001},${c.lng+0.001},${c.lat+0.001}`;
     const geom=encodeURIComponent(JSON.stringify({x:c.lng,y:c.lat}));
     const url=`${WORKER_URL}/egis-mcee/rest/services/lc/MapServer/identify`+
@@ -5742,6 +5744,7 @@ async function getRealLandcover(c){
       }
     }
   }catch(e){console.warn('EGIS MCEE identify 실패:',e.message);}
+  } // end if(false)
 
   // ─── ③ 환경부 MCEE GeoServer WMS GetFeatureInfo (api.mcee.go.kr — 구 egis.me.go.kr) ──────
   // 레이어: EGIS:lv2_2024y (중분류, 100~700 코드), EGIS:lv3_2024y (세분류, 상세)
