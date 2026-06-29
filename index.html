@@ -971,7 +971,7 @@ async function _doAnalysis(address, coords){
       dataLog.push({category:'토지피복',icon:'🌿',api:'환경부 토지피복도 (MCEE · Cloudflare Worker)',
         url:WORKER_URL,note:'환경부 EGIS 토지피복도 3단계 분류 (lv3_2025y) — GetFeatureInfo 포인트 조회 (Worker CORS 우회)',
         values:`토지피복: ${mceeLC.lnlc_nm} / Hansen 식생형: ${mceeLC.hansen||'—'}`,
-        status:'real',verifyUrl:'https://egis.me.go.kr/',verifyLabel:'환경부 EGIS 확인'});
+        status:'real',verifyUrl:'https://aid.mcee.go.kr/',verifyLabel:'환경부 EGIS 확인'});
     }
 
     // ── PNU (필지고유번호) 추출 ──
@@ -1181,17 +1181,17 @@ async function _doAnalysis(address, coords){
 
     // dataLog에 4대 항목 추가
     dataLog.push({category:'국토환경성평가지도',icon:'🗺️',
-      api:envGradeReal?'ECVAM WMS GetFeatureInfo (neins.go.kr)':'추정 (생태자연도·비오톱 기반)',
-      note:envGradeReal?`ECVAM lt_c_enveval_res 레이어 포인트 조회`:'실 API 미연동 — 생태등급 기반 추정',
+      api:envGradeReal?'ECVAM WMS GetFeatureInfo (neins.go.kr/apicall.do)':'추정 (생태자연도·비오톱 기반)',
+      note:envGradeReal?`ECVAM nem_ecvam 레이어 포인트 조회`:'실 API 미연동 — 생태등급 기반 추정',
       values:`국토환경성 ${envGrade.grade||'?'}등급 — ${envGrade.label||''}`,
       status:envGradeReal?'real':'simulated',
       verifyUrl:'https://www.neins.go.kr/gep/cr/gis/gis01.do',verifyLabel:'국토환경성평가지도 확인'});
     dataLog.push({category:'토지피복지도',icon:'🏞️',
-      api:landcover?'환경부 EGIS WMS GetFeatureInfo (egis.me.go.kr)':'미조회',
-      note:landcover?`EGIS me:LCODE_A 레이어 포인트 조회`:'EGIS GetFeatureInfo 미연동',
+      api:landcover?'환경부 토지피복도 WMS GetFeatureInfo (api.mcee.go.kr)':'미조회',
+      note:landcover?`MCEE GeoServer EGIS:lv2_2024y 레이어 포인트 조회`:'EGIS GetFeatureInfo 미연동',
       values:landcover?`${landcover.code} ${landcover.name}`:'조회 필요',
       status:landcover?'real':'simulated',
-      verifyUrl:'https://egis.me.go.kr/',verifyLabel:'환경공간정보서비스 확인'});
+      verifyUrl:'https://aid.mcee.go.kr/',verifyLabel:'환경공간정보서비스 확인'});
     dataLog.push({category:'겨울철새 도래현황',icon:'🦢',
       api:'환경부 주요 겨울철새 도래지 DB (내장)',
       note:`반경 15km 이내 도래지 ${winterBirds.nearby.length}개소`,
@@ -2044,7 +2044,7 @@ async function getNIHHSHardiness(address, absMinHint=null){
     const sido=extractSido(address);
     if(!sido) return null;
     if(!AVAIL.soilrda) return null;
-    const url=`${WORKER_URL}/nihhs/hardyMap?시도명=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
+    const url=`${WORKER_URL}/nihhs/hardyMap?sido=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
     const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
     const text=await r.text();
     if(!text||!text.includes('<item>')) return null;
@@ -5544,18 +5544,21 @@ async function getRealEnvGrade(c){
   try{
     const d=0.0008; // ~80m bbox
     const bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
-    const url=`${WORKER_URL}/ecvam?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
-      `&LAYERS=lt_c_enveval_res&QUERY_LAYERS=lt_c_enveval_res`+
+    // ECVAM WMS: /apicall.do + APIKEY+DOMAIN (Worker 주입), 레이어 nem_ecvam, VERSION 1.1.0
+    const url=`${WORKER_URL}/ecvam?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.0`+
+      `&LAYERS=nem_ecvam&QUERY_LAYERS=nem_ecvam`+
       `&BBOX=${bbox}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
       `&INFO_FORMAT=application/json`;
     const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
     const text=await r.text();
     if(!text||text.trim().startsWith('<')) return null; // HTML error → null
+    console.log('🗺️ ECVAM 응답 (첫 300자):', text.slice(0,300));
     const d2=JSON.parse(text);
     const features=d2.features||d2.featureInfo?.features||[];
     if(!features.length) return null;
     const props=features[0].properties||features[0];
-    const gradeNum=parseInt(props.ENVEV_GRD||props.GRD||props.grade||props.GRD_CD||'0');
+    // ECVAM nem_ecvam 레이어 속성: NEM_GRD 또는 GRD (1~5등급)
+    const gradeNum=parseInt(props.NEM_GRD||props.ENVEV_GRD||props.GRD||props.grade||props.GRD_CD||'0');
     if(!gradeNum||gradeNum<1||gradeNum>5) return null;
     const labels=['','1등급(보전최우선)','2등급(보전)','3등급(보전관리)','4등급(개발관리)','5등급(개발가능)'];
     const bcs  =['','red','red','yellow','blue','grey'];
@@ -5636,8 +5639,9 @@ async function getRealLandcover(c){
     }
   }catch(e){console.warn('EGIS MCEE identify 실패:',e.message);}
 
-  // ─── ③ EGIS GeoServer WMS GetFeatureInfo (마지막 시도) ───────────────────────────
-  const EGIS_LAYERS=['me:LCODE_A','me:LNLC_A','me:LSCT_MELT_LNLC'];
+  // ─── ③ 환경부 MCEE GeoServer WMS GetFeatureInfo (api.mcee.go.kr — 구 egis.me.go.kr) ──────
+  // 레이어: EGIS:lv2_2024y (중분류, 100~700 코드), EGIS:lv3_2024y (세분류, 상세)
+  const EGIS_LAYERS=['EGIS:lv2_2024y','EGIS:lv3_2024y','EGIS:lv2_2023y'];
   const bbox2=`${c.lng-0.0008},${c.lat-0.0008},${c.lng+0.0008},${c.lat+0.0008}`;
   for(const layer of EGIS_LAYERS){
     try{
@@ -5645,21 +5649,22 @@ async function getRealLandcover(c){
         `&LAYERS=${layer}&QUERY_LAYERS=${layer}`+
         `&BBOX=${bbox2}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
         `&INFO_FORMAT=application/json`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+      const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
       const text=await r.text();
-      if(!text||text.trim().startsWith('<')||text.includes('"exceptions"')) continue;
+      if(!text||text.trim().startsWith('<')||text.includes('"exceptions"')||text.includes('ServiceException')) continue;
       const d2=JSON.parse(text);
       const features=d2.features||[];
       if(!features.length) continue;
       const props=features[0].properties||{};
-      const code=String(props.LNLC_CD||props.lnlc_cd||props.L2_CODE||props.CODE||'');
-      const name=props.LNLC_NM||props.lnlc_nm||props.L2_NM||props.CLS_NM||'';
+      // MCEE GeoServer 속성명: LNLC_CD / LNLC_NM (중분류), L3_CD / L3_NM (세분류)
+      const code=String(props.LNLC_CD||props.lnlc_cd||props.L3_CD||props.L2_CODE||props.CODE||props.GRIDCODE||'');
+      const name=props.LNLC_NM||props.lnlc_nm||props.L3_NM||props.L2_NM||props.CLS_NM||props.CLASSNAME||'';
       if(!name&&!code) continue;
       const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
-      const water=code.startsWith('5')||name.includes('수계')||name.includes('강');
-      console.log(`✅ 토지피복 GeoServer (${layer}):`,code,name);
+      const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호수');
+      console.log(`✅ 토지피복 MCEE GeoServer (${layer}):`,code,name,'속성:',JSON.stringify(props).slice(0,200));
       return{code,name,isEco:eco,isWater:water,layer,
-        source:'실제 (환경부 EGIS 토지피복도)',reliability:'real'};
+        source:'실제 (환경부 토지피복도 api.mcee.go.kr)',reliability:'real'};
     }catch(e){console.warn(`토지피복 ${layer} 실패:`,e.message);}
   }
   return null;
