@@ -2761,9 +2761,8 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
   });
 
   // ─── 3. PM2.5 대기질 ─────────────────────────────────────────
-  // 출처: 환경정책기본법 시행령 별표1 대기환경기준
-  // 기준: 연평균 15㎍/㎥ 이하, 일평균 35㎍/㎥ 이하
-  if(air.pm25!=null){
+  // 실측 연동 시에만 지표 표시 — 미연동(시뮬레이션) 데이터는 신뢰도 낮아 제외
+  if(air.pm25!=null && air.reliability==='real'){
     const pm25Status = air.pm25 <= 15 ? 'good' : air.pm25 <= 35 ? 'caution' : 'poor';
     const pm25Strategies = [];
     if (air.pm25 > 35) pm25Strategies.push('PM2.5 일평균 기준(35㎍/㎥) 초과 — 상록교목 3열 이상 방진 녹지대 설치 권고');
@@ -2779,12 +2778,8 @@ function buildPerformance(wx, lsc, water, eco, soc, trf, air, soil, radius) {
       sourceUrl:'https://www.law.go.kr/lsInfoP.do?lsiSeq=203772',
       strategies: pm25Strategies
     });
-  }else{
-    indicators.push({key:'air',icon:'🫁',label:'PM2.5 대기질',
-      current:'미연동',standard:'연평균 15㎍/㎥ 이하 / 일평균 35㎍/㎥ 이하',status:'unknown',
-      judgment:'Worker AIRKOREA_KEY 설정 후 실측값 자동 연동',
-      source:'환경정책기본법 시행령 별표1',sourceUrl:'https://www.airkorea.or.kr',strategies:['Cloudflare Worker에 AIRKOREA_KEY 시크릿 설정 시 실측 PM2.5 자동 연동']});
   }
+  // 미연동 시 PM2.5 지표 완전 생략 (불완전 데이터는 신뢰도 손상)
 
   // ─── 4. 소음 환경 ─────────────────────────────────────────────
   // 출처: 환경정책기본법 시행령 별표1 소음환경기준
@@ -3397,11 +3392,20 @@ function buildRegulation(urb, eco, water, soil, lsc) {
   const bcr = (urb && urb.bcr) || 60;
 
   // ① 설계 가능범위
-  const freeActions = [
+  // 생태 1등급 또는 용도지역 미확인 → 건폐율/용적률 수치 절대 표시 금지
+  const isEco1 = eco.grade === 1;
+  const zoneConfirmed = urb && urb.fsr && urb.bcr && zone !== '미확인' && zone !== '확인필요';
+  const freeActions = isEco1 ? [
+    '⚠️ 생태자연도 1등급 지역 — 건폐율·용적률 수치 적용 불가',
+    '보전·복원 중심 설계만 가능 (자연환경보전법 제34조)',
+    '개발 가능 여부 및 규모는 지자체·환경부 협의 필수',
+  ] : zoneConfirmed ? [
     `조경면적 ${greenArea}`,
     `건폐율 ${bcr}% · 용적률 ${fsr}% 이하 적용`,
-    '도시공원 내 공원시설 설치 (공원녹지법 제16조)',
-    zone.includes('주거') ? '근린공원·어린이공원 연계 설계 가능' : zone.includes('상업') ? '광장·보행 연계 설계 가능' : '용도에 맞는 공원·녹지 설계 가능',
+    zone.includes('주거') ? '근린공원·어린이공원 연계 설계 가능' : zone.includes('상업') ? '광장·보행 연계 설계 가능' : '조건부 공원·녹지 설계 가능 (지자체 협의)',
+  ] : [
+    '⚠️ 용도지역 미확인 — 건폐율·용적률 수치 제시 불가',
+    '지자체 도시계획과 또는 토지이음(eum.go.kr) 직접 확인 필수',
   ];
 
   // ② 금지행위
@@ -3752,12 +3756,13 @@ function renderResults(d){
     <div class="reg-card">
       <div class="reg-title">⚖️ 규제 분석 <span style="font-size:10px;color:#78909c;font-weight:400">— 설계 전 법적 검토</span></div>
 
-      <!-- 용도·건폐·용적·조경 메타 -->
+      <!-- 용도·건폐·용적·조경 메타 — 생태1등급 시 건폐율/용적률 숨김 -->
       <div class="reg-meta-bar">
         <span class="reg-meta-chip">📌 ${reg.zone}</span>
+        ${eco.grade === 1 ? `<span class="reg-meta-chip" style="background:#ffebee;color:#c62828;border-color:#ef9a9a">⚠️ 1등급 — 수치 적용 불가</span>` : `
         <span class="reg-meta-chip">건폐율 max ${reg.bcr}%</span>
         <span class="reg-meta-chip">용적률 max ${reg.fsr}%</span>
-        <span class="reg-meta-chip">조경: ${reg.greenArea.split(' ')[0]} ${reg.greenArea.split(' ')[1]||''}</span>
+        <span class="reg-meta-chip">조경: ${reg.greenArea.split(' ')[0]} ${reg.greenArea.split(' ')[1]||''}</span>`}
       </div>
 
       <!-- 4칸 규제 그리드 -->
@@ -4044,7 +4049,7 @@ function renderResults(d){
 
       <div class="tab-content" id="tab-urban">
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
-        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
+        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}</span></div>
         ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목 (토지이용상황)</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
         ${urb.nedRoadSide?`<div class="data-row"><span class="data-key">도로접면</span><span class="data-val">${urb.nedRoadSide==='맹지'?badge('맹지','red'):urb.nedRoadSide}</span></div>`:''}
         ${urb.nedTerrainH?`<div class="data-row"><span class="data-key">지형높이</span><span class="data-val">${urb.nedTerrainH}${urb.nedTerrainF?` · ${urb.nedTerrainF}`:''}</span></div>`:''}
@@ -4090,7 +4095,7 @@ function renderResults(d){
         <!-- 법적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 법적 · 규제 조건 ──</div>
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
-        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${urb.fsr}% / ${urb.bcr}%</span></div>
+        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}</span></div>
         ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
         ${urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
         ${reg&&reg.items&&reg.items.length?`
@@ -4200,7 +4205,7 @@ async function downloadPDF(){
     const ts=`${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
 
     const wrap=document.createElement('div');
-    wrap.style.cssText='position:fixed;left:-9999px;top:0;width:794px;background:#fff;font-family:"Noto Sans KR",sans-serif;color:#1a1a2e;font-size:13px;line-height:1.6;';
+    wrap.style.cssText='position:absolute;left:-9999px;top:0;width:794px;background:#fff;font-family:"Noto Sans KR",sans-serif;color:#1a1a2e;font-size:13px;line-height:1.6;z-index:-1;';
 
     const sc=an.scores;
     const scColor=v=>v>=80?'#0288d1':v>=60?'#2e7d32':v>=40?'#f57f17':'#c62828';
@@ -4465,8 +4470,10 @@ ${pf.indicators.filter(ind=>['air','hydro','heat'].includes(ind.key)).map((ind,i
         <div style="padding:12px 16px">
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
             <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px;font-weight:700">${reg.zone}</span>
-            <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">건폐율 max ${reg.bcr}%</span>
-            <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">용적률 max ${reg.fsr}%</span>
+            ${eco.grade===1
+              ? `<span style="background:#ffebee;border:1px solid #ef9a9a;padding:3px 10px;border-radius:4px;font-size:10px;color:#c62828">⚠️ 생태1등급 — 건폐율/용적률 적용 불가</span>`
+              : `<span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">건폐율 max ${reg.bcr}%</span>
+            <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">용적률 max ${reg.fsr}%</span>`}
           </div>
           <table style="width:100%;border-collapse:collapse;font-size:10px">
             <tr>
@@ -4602,7 +4609,8 @@ ${pf.indicators.filter(ind=>['air','hydro','heat'].includes(ind.key)).map((ind,i
 
     document.body.appendChild(wrap);
 
-    const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const canvas=await html2canvas(wrap,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,removeContainer:false});
     document.body.removeChild(wrap);
 
     const {jsPDF}=window.jspdf;
