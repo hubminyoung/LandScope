@@ -3910,13 +3910,19 @@ function renderResults(d){
         ${lc?.isEco?`<div style="font-size:11px;color:#a5d6a7;padding:2px 0">🌿 녹지/산림 — 생태계 보전 또는 녹지 활용 가능</div>`:''}
         <div class="source-row">${lc?'● 실제 (환경부 EGIS WMS)':'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <!-- ④ 겨울철새 도래현황 (항상 표시) -->
+        <!-- ④ 겨울철새 도래현황 (공인 근거 중심) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 겨울철새 도래현황 ──</div>
-        <div class="data-row"><span class="data-key">도래 가능성</span><span class="data-val">${wb?badge(wb.probability,wb.probability==='높음'?'red':wb.probability==='보통'?'yellow':'grey'):badge('분석불가','grey')}</span></div>
-        ${wb?.nearby?.length?`<div class="data-row"><span class="data-key">인근 도래지</span><span class="data-val" style="font-size:11px">${wb.nearby.slice(0,2).map(s=>`${s.name} (${s.d}m)`).join('<br>')}</span></div>`:'<div class="data-row"><span class="data-key">인근 도래지</span><span class="data-val" style="color:#546e7a">15km 이내 주요 도래지 없음</span></div>'}
-        ${wb?.repSpecies?.length?`<div class="data-row"><span class="data-key">주요 종</span><span class="data-val" style="font-size:11px">${wb.repSpecies.join(' · ')}</span></div>`:''}
-        ${wb?.notice?.length?wb.notice.map(n=>`<div style="font-size:11px;color:#ffcc80;padding:2px 0">⚠️ ${n}</div>`).join(''):''}
+        ${wb?.nearby?.length ? `
+        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge(wb.probability==='높음'?'영향권 내 (5km)':wb.probability==='보통'?'영향권 내 (5~8km)':'영향권 외',wb.probability==='높음'?'red':wb.probability==='보통'?'yellow':'grey')} <span style="font-size:10px;color:#78909c">신뢰도 ${wb.confidence}%</span></span></div>
+        <div class="data-row"><span class="data-key">공간 거리</span><span class="data-val" style="font-size:11px">${wb.nearby.slice(0,2).map(s=>`${s.name} ${s.d.toLocaleString()}m`).join(' · ')}</span></div>
+        ${wb.repSpecies?.length?`<div class="data-row"><span class="data-key">센서스 주요 종</span><span class="data-val" style="font-size:11px">${wb.repSpecies.join(' · ')}</span></div>`:''}
+        <div style="margin:4px 0;font-size:10px;color:#90a4ae">${wb.basis.map(b=>`<div style="padding:1px 0">📋 ${b}</div>`).join('')}</div>
+        ${wb.notice.map(n=>`<div style="font-size:11px;color:#ffcc80;padding:2px 0">⚠️ ${n}</div>`).join('')}
+        <div class="source-row">● ${wb.source} · 환경부 생태·자연도 작성지침 준거</div>
+        ` : `
+        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge('15km 이내 주요 도래지 없음','grey')}</span></div>
         <div class="source-row">⬡ ${wb?wb.source:'미분석'}</div>
+        `}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- 기타 생태 정보 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 녹지 · 서식환경 ──</div>
@@ -6050,7 +6056,23 @@ function getWinterBirds(c){
     '📢 정온 구간(이동 경로 인근) 소음 저감 계획'
   ]:[];
 
-  return{probability,nearby,repSpecies,notice,
+  // 신뢰도: 거리 기반 선형 감소 (3km=90%, 5km=80%, 8km=65%)
+  const closestD = nearby.length>0 ? nearby[0].d : null;
+  const confidence = closestD!=null
+    ? Math.max(50, Math.round(95 - closestD/100))
+    : (nearHan ? 55 : 0);
+
+  // 공인 근거 출처 3종 세트
+  const basis = nearby.length>0 ? [
+    '환경부 「생태·자연도 작성지침」 (조류 행동반경 3~5km 기준)',
+    '국립생태원 겨울철새 동시센서스 DB (주요 도래지 좌표)',
+    `최근접 도래지: ${nearby[0].name} (${nearby[0].d.toLocaleString()}m)`,
+  ] : nearHan ? [
+    '한강수계 인접 — 수계 기반 도래 가능성 추정',
+    '공식 도래지 DB 미포함 — 현장 조사 필요',
+  ] : [];
+
+  return{probability,nearby,repSpecies,notice,confidence,basis,
     source:nearby.length>0?'내장 DB (환경부 주요 겨울철새 도래지)':'판단 불가',
     reliability:nearby.length>0?'partial':'none'};
 }
