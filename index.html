@@ -3573,9 +3573,101 @@ function updateMap(d){
 // ════════════════════════════════════════════
 const LABELS={ecology:'환경/생태',climate:'기후/기상',soil:'토양/지질',air:'소음/대기',urban:'토지계획',traffic:'교통/이용',social:'사회/문화',water:'수환경',landscape:'경관/비오톱'};
 
+// ════════════════════════════════════════════
+// 🌱 식재 서식 조건 파생 — 흙토람 + KMA → 5개 항목
+// ════════════════════════════════════════════
+function derivePlantHabitat(d){
+  const {soil, water, climateSummary:cs} = d;
+  const precip = cs?.annualPrecip ?? water?.annualPrecip ?? 1300;
+
+  // ── ① 일조 ─────────────────────────────────
+  let sunLabel, sunNote, sunColor;
+  const solar = cs?.annualSolar;        // MJ/m²/day
+  const sunH   = cs?.annualSunshine;    // hr/yr
+  const sunR   = cs?.sunshineRate;      // %
+
+  if(solar != null){
+    if(solar >= 14)       { sunLabel='양지';         sunNote=`${solar} MJ/m²·일`; sunColor='#ffd54f'; }
+    else if(solar >= 11)  { sunLabel='반음지~양지';   sunNote=`${solar} MJ/m²·일`; sunColor='#fff176'; }
+    else if(solar >= 8)   { sunLabel='반음지';        sunNote=`${solar} MJ/m²·일`; sunColor='#e6ee9c'; }
+    else                  { sunLabel='음지~반음지';   sunNote=`${solar} MJ/m²·일`; sunColor='#b0bec5'; }
+  } else if(sunH != null){
+    if(sunH >= 2200)      { sunLabel='양지';         sunNote=`${sunH.toLocaleString()}h/yr`; sunColor='#ffd54f'; }
+    else if(sunH >= 1800) { sunLabel='반음지~양지';   sunNote=`${sunH.toLocaleString()}h/yr`; sunColor='#fff176'; }
+    else                  { sunLabel='반음지';        sunNote=`${sunH.toLocaleString()}h/yr`; sunColor='#e6ee9c'; }
+  } else {
+    sunLabel='반음지~양지'; sunNote='KMA 일사량 미연동'; sunColor='#78909c';
+  }
+
+  // ── ② 수분요구 ──────────────────────────────
+  let moistLabel, moistNote, moistColor;
+  const dr = soil?.drainage ?? '보통';
+  if(dr==='과다')                                    { moistLabel='건조';      moistColor='#ffcc80'; }
+  else if(dr==='매우양호')                            { moistLabel='건조~보통'; moistColor='#ffe082'; }
+  else if(dr==='양호' && precip < 1100)              { moistLabel='건조~보통'; moistColor='#ffe082'; }
+  else if(dr==='양호')                               { moistLabel='보통';      moistColor='#a5d6a7'; }
+  else if(dr==='보통' && precip >= 1400)             { moistLabel='습윤';      moistColor='#80deea'; }
+  else if(dr==='보통')                               { moistLabel='보통~습윤'; moistColor='#b2dfdb'; }
+  else if(dr==='불량')                               { moistLabel='습윤';      moistColor='#4dd0e1'; }
+  else if(dr==='매우불량')                           { moistLabel='과습';      moistColor='#29b6f6'; }
+  else                                               { moistLabel='보통';      moistColor='#a5d6a7'; }
+  moistNote = `${dr} · ${precip.toLocaleString()}mm/yr`;
+
+  // ── ③ 바닥/토성 ─────────────────────────────
+  const SOIL_MAP = {
+    '사질토':'사질 (sandy)','사토':'사질 (sandy)',
+    '사양토':'사질양토 (sandy loam)',
+    '양토':'양토 (loam)',
+    '미사양토':'미사양토 (silt loam)','미사질양토':'미사양토 (silt loam)',
+    '미사토':'미사토 (silt)',
+    '식양토':'점질양토 (clay loam)',
+    '사질식양토':'사질식양토 (sandy clay loam)',
+    '식토':'점토 (clay)',
+    '자갈':'자갈·사력 (gravelly)',
+    '부식토':'부식토 (organic)',
+  };
+  const rawType = soil?.soil_type ?? '양토';
+  const subLabel = SOIL_MAP[rawType] ?? rawType;
+  const subColor = '#b0bec5';
+
+  // ── ④ 영양소 ────────────────────────────────
+  let nutLabel, nutNote, nutColor;
+  let omVal = soil?.om ?? 2;
+  // soilChemSource 있으면 단위가 g/kg → %로 환산 (÷10)
+  if(soil?.soilChemSource) omVal = omVal / 10;
+  if(omVal >= 3)       { nutLabel='비옥';      nutNote=`OM ${(soil?.soilChemSource ? soil.om+'g/kg' : omVal.toFixed(1)+'%')}`; nutColor='#a5d6a7'; }
+  else if(omVal >= 1.5){ nutLabel='보통';      nutNote=`OM ${(soil?.soilChemSource ? soil.om+'g/kg' : omVal.toFixed(1)+'%')}`; nutColor='#fff176'; }
+  else                 { nutLabel='척박';      nutNote=`OM ${(soil?.soilChemSource ? soil.om+'g/kg' : omVal.toFixed(1)+'%')}`; nutColor='#ef9a9a'; }
+
+  // ── ⑤ pH ────────────────────────────────────
+  let phLabel, phColor;
+  const ph = soil?.ph ?? 6.5;
+  if(ph < 4.5)       { phLabel='극강산성'; phColor='#ef9a9a'; }
+  else if(ph < 5.5)  { phLabel='강산성';   phColor='#ffab91'; }
+  else if(ph < 6.5)  { phLabel='약산성';   phColor='#a5d6a7'; }
+  else if(ph < 7.5)  { phLabel='중성';     phColor='#4fc3f7'; }
+  else if(ph < 8.5)  { phLabel='알칼리성'; phColor='#ffcc80'; }
+  else               { phLabel='강알칼리'; phColor='#ef9a9a'; }
+
+  // ── 데이터 신뢰도 ────────────────────────────
+  const reliability = soil?.reliability === 'real' || soil?.soilChemSource
+    ? '● 흙토람 실측' + (cs?.annualSolar ? ' · KMA 일사량 실측' : '')
+    : '⬡ 흙토람 추정' + (cs?.annualSolar ? ' · KMA 일사량 실측' : ' · KMA 미연동');
+
+  return {
+    sun:   { label:sunLabel,   note:sunNote,   color:sunColor   },
+    moist: { label:moistLabel, note:moistNote, color:moistColor },
+    sub:   { label:subLabel,   note:rawType,   color:subColor   },
+    nut:   { label:nutLabel,   note:nutNote,   color:nutColor   },
+    ph:    { label:`${ph} (${phLabel})`, note:`pH ${ph}`, color:phColor },
+    reliability,
+  };
+}
+
 function renderResults(d){
   const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,nihHardiness:nih,osm:osmD}=d;
   const sc=an.scores;
+  const ph_d = derivePlantHabitat(d); // 식재 서식 조건
 
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
@@ -3644,17 +3736,6 @@ function renderResults(d){
       <div style="font-size:9px;color:#546e7a;margin-bottom:4px;margin-top:4px">부입지 특성 — 복합 조건</div>
       <div class="stype-aspects-row">${st.aspects.map(a=>`<span class="stype-aspect-chip" style="color:${a.color};border-color:${a.color}50;">${a.icon} ${a.label}</span>`).join('')}</div>` : ''}
 
-      <!-- 5단계 분석 흐름 -->
-      <div style="font-size:9px;color:#546e7a;margin-bottom:5px">분석 흐름 요약</div>
-      <div class="stype-phase-row">${st.phaseAnalysis.map(p=>`
-        <div class="stype-phase-cell">
-          <div class="stype-phase-icon">${p.icon}</div>
-          <div class="stype-phase-label">${p.phase}</div>
-          <div class="stype-phase-status stype-pst-${p.status}">${p.status}</div>
-          <div class="stype-phase-note">${p.note}</div>
-        </div>`).join('')}
-      </div>
-
       <!-- 규제 상태 & 설계 자유도 -->
       <div class="stype-meta-row">
         <div class="stype-reg-badge stype-reg-${st.regulatory.statusCode}">⚖️ ${st.regulatory.status}</div>
@@ -3664,7 +3745,7 @@ function renderResults(d){
 
       <!-- 핵심 설계 전략 -->
       <div style="font-size:10px;font-weight:700;color:#4fc3f7;margin-bottom:6px">🎯 ${st.primary.label} 핵심 전략</div>
-      ${st.strategies.map((s,i)=>`<div class="stype-strat-row"><span class="stype-strat-num">${i+1}</span>${s}</div>`).join('')}
+      ${st.strategies.slice(0,3).map((s,i)=>`<div class="stype-strat-row"><span class="stype-strat-num">${i+1}</span>${s}</div>`).join('')}
     </div>
 
     <!-- ⚖️ 규제 분석 블록 -->
@@ -3700,21 +3781,8 @@ function renderResults(d){
       </div>
     </div>
 
-    <!-- 🎯 도시맥락 → 공간전략 카드 -->
-    <div class="strat-card">
-      <div class="strat-title">🎯 도시맥락 → 공간전략 <span style="font-size:10px;color:#78909c;font-weight:400">— 데이터 → 설계 언어 번역</span></div>
-      ${ss.strategies.length ? ss.strategies.slice(0,5).map(s=>`
-      <div class="strat-row strat-${s.priority}">
-        <div class="strat-icon">${s.icon}</div>
-        <div style="flex:1">
-          <div class="strat-trigger">${s.trigger} <span class="strat-data">(${s.data})</span></div>
-          <div class="strat-response"><span class="strat-arrow">→</span>${s.response}</div>
-        </div>
-      </div>`).join('') : '<div style="font-size:11px;color:#546e7a;padding:8px">특별한 도시맥락 전략 없음 — 일반 조경 설계 자유도 높음</div>'}
-    </div>
-
-    <!-- 🌡️ 환경 기준 적합성 검토 카드 -->
-    <div class="perf-card">
+    <!-- 🌡️ 환경 기준 적합성 검토 카드 — 실측 지표 있을 때만 표시 -->
+    ${pf.indicators.filter(i=>['air','hydro','heat'].includes(i.key)&&i.status!=='unknown').length > 0 ? `<div class="perf-card">
       <div class="perf-card-title">🌡️ 환경 기준 적합성 검토 <span style="font-size:10px;color:#546e7a;font-weight:400">— 공인 법령·기관 기준 정성 판단</span></div>
 
       <!-- 판정 요약 헤더 -->
@@ -3726,21 +3794,67 @@ function renderResults(d){
       </div>
 
       <!-- 7개 지표 목록 -->
-      ${pf.indicators.filter(i=>['air','hydro','heat'].includes(i.key)).map(ind => `
+      ${pf.indicators.filter(i=>['air','hydro','heat'].includes(i.key)&&i.status!=='unknown').map(ind => `
       <div class="perf-indicator-row perf-ind-${ind.status}">
         <div class="perf-ind-header">
           <span class="perf-ind-icon">${ind.icon}</span>
           <span class="perf-ind-label">${ind.label}</span>
-          <span class="perf-badge-${ind.status}">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':ind.status==='unknown'?'⬡ 미연동':'❌ 기준미달'}</span>
+          <span class="perf-badge-${ind.status}">${ind.status==='good'?'✅ 기준충족':ind.status==='caution'?'⚠️ 주의':'❌ 기준미달'}</span>
         </div>
         <div class="perf-ind-current">${ind.current}</div>
         <div class="perf-ind-standard">기준: ${ind.standard}</div>
-        <div class="perf-ind-judgment" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':ind.status==='unknown'?'#78909c':'#ef9a9a'}">▶ ${ind.judgment}</div>
+        <div class="perf-ind-judgment" style="color:${ind.status==='good'?'#a5d6a7':ind.status==='caution'?'#fff176':'#ef9a9a'}">▶ ${ind.judgment}</div>
         ${ind.note ? `<div class="perf-ind-note">${ind.note}</div>` : ''}
         <div style="margin-top:4px">${ind.strategies.slice(0,2).map(s=>`<div class="perf-strategy-item">${s}</div>`).join('')}</div>
         <a class="perf-source-link" href="${ind.sourceUrl}" target="_blank">📋 ${ind.source}</a>
       </div>`).join('')}
+    </div>` : ''}
+
+    <!-- 🌱 식재 서식 조건 카드 ─ 흙토람 + KMA 파생 -->
+    <div class="card" style="padding:14px;">
+      <div class="card-title" style="margin-bottom:12px;">🌱 식재 서식 조건
+        <span style="font-size:10px;color:#546e7a;font-weight:400;margin-left:4px;">— 흙토람·KMA 데이터 자동 파생 · 현장측량 불필요</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
+        <!-- ① 일조 -->
+        <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.sun.color};">
+          <div style="font-size:18px;margin-bottom:3px;">☀️</div>
+          <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">일조</div>
+          <div style="font-size:12px;font-weight:700;color:${ph_d.sun.color};line-height:1.3;">${ph_d.sun.label}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sun.note}</div>
+        </div>
+        <!-- ② 수분요구 -->
+        <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.moist.color};">
+          <div style="font-size:18px;margin-bottom:3px;">💧</div>
+          <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">수분요구</div>
+          <div style="font-size:12px;font-weight:700;color:${ph_d.moist.color};line-height:1.3;">${ph_d.moist.label}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.moist.note}</div>
+        </div>
+        <!-- ③ 바닥(토성) -->
+        <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid #90a4ae;">
+          <div style="font-size:18px;margin-bottom:3px;">🏔️</div>
+          <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">바닥(토성)</div>
+          <div style="font-size:11px;font-weight:700;color:#cfd8dc;line-height:1.3;">${ph_d.sub.label}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sub.note}</div>
+        </div>
+        <!-- ④ 영양소 -->
+        <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.nut.color};">
+          <div style="font-size:18px;margin-bottom:3px;">🍃</div>
+          <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">영양소</div>
+          <div style="font-size:12px;font-weight:700;color:${ph_d.nut.color};line-height:1.3;">${ph_d.nut.label}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.nut.note}</div>
+        </div>
+        <!-- ⑤ pH -->
+        <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.ph.color};">
+          <div style="font-size:18px;margin-bottom:3px;">⚗️</div>
+          <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">pH 값</div>
+          <div style="font-size:11px;font-weight:700;color:${ph_d.ph.color};line-height:1.3;">${ph_d.ph.label}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.ph.note}</div>
+        </div>
+      </div>
+      <div class="source-row" style="margin-top:10px;">${ph_d.reliability}</div>
     </div>
+
     <div class="card" id="tab-card">
       <div class="tab-bar">
         <button class="tab-btn active" onclick="tab('anomaly',this)">🔍 종합·SWOT</button>
