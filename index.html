@@ -1632,7 +1632,7 @@ function processOSMData(osmData, c) {
   const artificialGreen = Math.min(20, Math.round(greenRatio * 15));
   const impervious = Math.min(90, Math.round(buildingRatio * 100));
   const permeable = Math.max(0, 100 - naturalPct - waterPct - artificialGreen - impervious);
-  const bar = +Math.min(0.95, (naturalPct*1.0 + waterPct*1.0 + artificialGreen*0.7 + permeable*0.5) / 100).toFixed(2);
+  const bar = +Math.min(0.95, (naturalPct*1.0 + waterPct*1.0 + artificialGreen*0.7 + permeable*0.3) / 100).toFixed(2); // 투수포장 가중치 0.3 (환경부 기준 하한)
 
   // 대하천 인접(강 폭 way로 검색됨) → 수변생태지 = 습지 준용
   if(hasMajorRiver && waterRatio > 0.05) hasWetland = true;
@@ -2319,7 +2319,7 @@ function buildWater(c,osm,elev,realFlood,realNoise){
     source:srcParts.length>0?`실제 (${srcParts.join(' + ')})`:' 시뮬레이션',
     reliability};
 }
-function buildLandscape(c,osm){const rng=seededRng(c.lat,c.lng,8);const bar=osm?osm.bar:+((0.2+rng()*0.4)).toFixed(2);const naturalPct=osm?osm.naturalPct:Math.round(rng()*40+5);const waterArea=osm?osm.waterPct:Math.round(rng()*10);const artificialGreen=osm?osm.artificialGreen:Math.round(rng()*15+5);const permeable=osm?osm.permeable:Math.round(rng()*20);const impervious=osm?osm.impervious:Math.round(rng()*50+10);const btGrade=osm?osm.ecoGrade:Math.ceil(rng()*5);const btGradeText=['I(보전최우수)','II(보전우수)','III(보전보통)','IV(개선가능)','V(개선필요)'][btGrade-1];const lsTypeOpts=osm&&osm.hasMajorRiver?'수변경관':osm&&osm.hasNaturalWood?'산림경관':pick(rng,['도시경관','주거경관','공원경관','역사문화경관']);const scenicLandmarks=[{name:'두물머리',lat:37.537,lng:127.500},{name:'팔당호',lat:37.527,lng:127.399},{name:'청평호',lat:37.742,lng:127.488},{name:'남이섬',lat:37.791,lng:127.526},{name:'북한강',lat:37.628,lng:127.494},{name:'소양강',lat:37.878,lng:127.730},{name:'한강공원(여의도)',lat:37.527,lng:126.933},{name:'한강공원(반포)',lat:37.512,lng:126.997}];const nearScenic=scenicLandmarks.find(lm=>dist(c.lat,c.lng,lm.lat,lm.lng)<5000);const scenicBonus=nearScenic?18:0;let viewQuality=osm?Math.round(bar*100+(btGrade<=2?15:0)):rndInt(rng,40,90);if(scenicBonus>0)viewQuality=Math.min(95,viewQuality+scenicBonus);const lsGrade=viewQuality>=80?'우수':viewQuality>=60?'양호':viewQuality>=40?'보통':'불량';const imp=[];if(bar<0.3)imp.push('🏜️ BAR 저조 — 녹지 확충 및 경관 개선 필요');if(bar>=0.5)imp.push('🌳 생태면적률 양호 — 생태 네트워크 유지');if(btGrade<=2)imp.push('🦋 비오톱 고등급 → 보전 우선');if(nearScenic)imp.push(`🏞️ ${nearScenic.name} 인접(5km 이내) — 조망 가치 +${scenicBonus}점 보정`);if(viewQuality>70)imp.push('🎨 경관 가치 높음 — 시각 연계성 강화');const score=Math.max(0,Math.min(100,viewQuality+(bar>=0.5?15:bar>=0.3?5:-10)+(btGrade<=2?10:-5)));return {bar,naturalPct,natural:naturalPct,water:waterArea,artificialGreen,permeable,impervious,btGrade,btGradeText,lsType:lsTypeOpts,landType:lsTypeOpts,viewQuality,lsGrade,nearScenic:nearScenic||null,scenicBonus,historicElement:rng()<0.08,viewOpen:rng()<0.4,implications:imp,score:Math.round(score),source:osm?'실제 (OpenStreetMap 토지피복 기반 BAR)':'시뮬레이션',reliability:osm?'real':'simulated'};}
+function buildLandscape(c,osm){const rng=seededRng(c.lat,c.lng,8);const bar=osm?osm.bar:+((0.2+rng()*0.4)).toFixed(2);const naturalPct=osm?osm.naturalPct:Math.round(rng()*40+5);const waterArea=osm?osm.waterPct:Math.round(rng()*10);const artificialGreen=osm?osm.artificialGreen:Math.round(rng()*15+5);const permeable=osm?osm.permeable:Math.round(rng()*20);const impervious=osm?osm.impervious:Math.round(rng()*50+10);const btGrade=osm?osm.ecoGrade:Math.ceil(rng()*5);const btGradeText=['I(보전최우수)','II(보전우수)','III(보전보통)','IV(개선가능)','V(개선필요)'][btGrade-1];const lsTypeOpts=osm&&osm.hasMajorRiver?'수변경관':osm&&osm.hasNaturalWood?'산림경관':pick(rng,['도시경관','주거경관','공원경관','역사문화경관']);const scenicLandmarks=[{name:'두물머리',lat:37.537,lng:127.500},{name:'팔당호',lat:37.527,lng:127.399},{name:'청평호',lat:37.742,lng:127.488},{name:'남이섬',lat:37.791,lng:127.526},{name:'북한강',lat:37.628,lng:127.494},{name:'소양강',lat:37.878,lng:127.730},{name:'한강공원(여의도)',lat:37.527,lng:126.933},{name:'한강공원(반포)',lat:37.512,lng:126.997}];const nearScenic=scenicLandmarks.find(lm=>dist(c.lat,c.lng,lm.lat,lm.lng)<5000);const scenicBonus=nearScenic?18:0;let viewQuality=osm?Math.round(bar*100+(btGrade<=2?15:0)):rndInt(rng,40,90);if(scenicBonus>0)viewQuality=Math.min(95,viewQuality+scenicBonus);const lsGrade=viewQuality>=80?'우수':viewQuality>=60?'양호':viewQuality>=40?'보통':'불량';const imp=[];if(bar<0.3)imp.push('🏜️ BAR 저조 — 녹지 확충 및 경관 개선 필요');if(bar>=0.5)imp.push('🌳 생태면적률 양호 — 생태 네트워크 유지');if(btGrade<=2)imp.push('🦋 비오톱 고등급 → 보전 우선');if((osm?osm.naturalPct:0)===0&&parseFloat(bar)>=0.3)imp.push('⚠️ 수목·자연녹지 0% — BAR 수치는 투수포장 기여분, 실질 녹지공간 조성 필요');if(nearScenic)imp.push(`🏞️ ${nearScenic.name} 인접(5km 이내) — 조망 가치 +${scenicBonus}점 보정`);if(viewQuality>70)imp.push('🎨 경관 가치 높음 — 시각 연계성 강화');const score=Math.max(0,Math.min(100,viewQuality+(bar>=0.5?15:bar>=0.3?5:-10)+(btGrade<=2?10:-5)));return {bar,naturalPct,natural:naturalPct,water:waterArea,artificialGreen,permeable,impervious,btGrade,btGradeText,lsType:lsTypeOpts,landType:lsTypeOpts,viewQuality,lsGrade,nearScenic:nearScenic||null,scenicBonus,historicElement:rng()<0.08,viewOpen:rng()<0.4,implications:imp,score:Math.round(score),source:osm?'실제 (OpenStreetMap 토지피복 기반 BAR)':'시뮬레이션',reliability:osm?'real':'simulated'};}
 
 function getEcology(c){
   const {lat,lng}=c;
@@ -2453,7 +2453,7 @@ function getLandscape(c){
   const permeable=rndInt(rng,5,25);
   const impervious=100-natural-water-artificialGreen-permeable;
 
-  const bar=((natural*1.0 + water*1.0 + artificialGreen*0.7 + permeable*0.5 + impervious*0.0)/100).toFixed(2);
+  const bar=((natural*1.0 + water*1.0 + artificialGreen*0.7 + permeable*0.3 + impervious*0.0)/100).toFixed(2); // 투수포장 가중치 0.3
 
   const btGrade=rndInt(rng,2,4);
   const landType=pick(rng,['수변경관','산림경관','도시경관','역사문화경관']);
@@ -2526,8 +2526,7 @@ function getSocial(c, sgisPop){
     return{popD:sgisPop.popD,age:null,aged65Pct,progs,
       source:sgisPop.source,reliability:'real'};
   }
-  // SGIS 없음 → 프로그램만 유지, 수치는 null로 처리
-  progs.push('🌿 다목적 복합공원');
+  // SGIS 없음 → 인구 데이터 없으므로 프로그램 제안 보류
   return{popD:null,age:null,progs,
     source:'SGIS 미연동 (Worker SGIS_KEY / SGIS_SECRET 미설정)',reliability:'none'};
 }
@@ -3777,6 +3776,7 @@ function renderResults(d){
         <span class="reg-meta-chip">📌 ${reg.zone}</span>
         ${(urb&&urb.greenbelt) ? `<span class="reg-meta-chip" style="background:#fff3e0;color:#e65100;border-color:#ffb74d">⚠️ 그린벨트 — 건폐율/용적률 적용 불가</span>`
         : eco.grade === 1 ? `<span class="reg-meta-chip" style="background:#ffebee;color:#c62828;border-color:#ef9a9a">⚠️ 1등급 — 수치 적용 불가</span>`
+        : (!reg.bcr||!reg.fsr||reg.zone==='미확인'||reg.zone==='확인필요') ? `<span class="reg-meta-chip" style="background:#263238;color:#90a4ae;border-color:#546e7a">⚠️ 용도지역 미확인 — 수치 미제공</span>`
         : `<span class="reg-meta-chip">건폐율 max ${reg.bcr}%</span>
         <span class="reg-meta-chip">용적률 max ${reg.fsr}%</span>
         <span class="reg-meta-chip">조경: ${reg.greenArea.split(' ')[0]} ${reg.greenArea.split(' ')[1]||''}</span>`}
@@ -4133,7 +4133,9 @@ function renderResults(d){
         ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join(''):''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 이용 프로그램 제안</div>
-        ${soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}
+        ${soc.reliability==='none'
+          ? `<span style="font-size:10px;color:#546e7a">⬡ 배후 인구·보행량 데이터 미연동 → SGIS 연결 후 활성화</span>`
+          : soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}
         <div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>
       </div>
 
