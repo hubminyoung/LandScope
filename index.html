@@ -4225,7 +4225,7 @@ async function downloadPDF(){
   btn.disabled=true; btn.textContent='⏳ PDF 생성 중…';
   try{
     const d=analysisResult;
-    const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev,osm:osmD,climateSummary:cs}=d;
+    const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev,osm:osmD,climateSummary:cs,winterBirds:wb,nihHardiness:nih}=d;
     const now=new Date();
     const ts=`${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
 
@@ -4305,6 +4305,47 @@ async function downloadPDF(){
         </div>
       </div>
 
+      <!-- 기후·기상 상세 -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:14px;font-weight:700;color:#0288d1;border-bottom:2px solid #0288d1;padding-bottom:4px;margin-bottom:10px">🌤️ 기후·기상 상세</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <tr style="background:#0288d1;color:#fff"><th style="padding:7px 10px;text-align:left">항목</th><th style="padding:7px 10px;text-align:left">값</th></tr>
+          ${cs?.annualMean!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 기온</td><td style="padding:6px 10px;font-weight:600">${cs.annualMean}°C</td></tr>`:''}
+          ${cs?.annualMax!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 최고기온</td><td style="padding:6px 10px;font-weight:600;color:#ef5350">${cs.annualMax}°C</td></tr>`:''}
+          ${cs?.annualMin!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 최저기온</td><td style="padding:6px 10px;font-weight:600;color:#29b6f6">${cs.annualMin}°C</td></tr>`:''}
+          ${cs?.absMin!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">극한 최저기온</td><td style="padding:6px 10px;font-weight:600;color:#7986cb">${cs.absMin}°C</td></tr>`:''}
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">USDA 내한성 구역</td><td style="padding:6px 10px;font-weight:600">${hz?.zone||'—'} ${hz?.tempRange?`(${hz.tempRange})`:''}</td></tr>
+          ${nih?.zone?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">농진청 내한성</td><td style="padding:6px 10px;font-weight:600">${nih.zone} (${nih.sido})</td></tr>`:''}
+          ${cs?.annualPrecip!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연강수량</td><td style="padding:6px 10px;font-weight:600">${cs.annualPrecip}mm</td></tr>`:''}
+          ${cs?.precipPattern?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">강수 패턴</td><td style="padding:6px 10px;font-weight:600">${cs.precipPattern}</td></tr>`:''}
+          ${cs?.dewPoint!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 이슬점</td><td style="padding:6px 10px;font-weight:600">${cs.dewPoint}°C</td></tr>`:''}
+          ${cs?.humidity!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 상대습도</td><td style="padding:6px 10px;font-weight:600">~${cs.humidity}%</td></tr>`:''}
+          ${cs?.windSummary?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">계절 주풍향</td><td style="padding:6px 10px;font-weight:600">${cs.windSummary}</td></tr>`:''}
+          ${cs?.windSpeed!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연평균 풍속</td><td style="padding:6px 10px;font-weight:600">${cs.windSpeed}m/s</td></tr>`:''}
+          ${cs?.sunshine!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">연간 일조시간</td><td style="padding:6px 10px;font-weight:600">${cs.sunshine}시간 (일조율 ${cs.sunshineRatio??'—'}%)</td></tr>`:''}
+        </table>
+        <div style="margin-top:6px;font-size:10px;color:#90a4ae">※ 기상청 ASOS 실측 · 최근 3년 평균 (장기 설계 시 30년 평년값 교차 검토 권장)</div>
+      </div>
+
+      <!-- 지형·토양 상세 -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:14px;font-weight:700;color:#0288d1;border-bottom:2px solid #0288d1;padding-bottom:4px;margin-bottom:10px">🏔️ 지형·토양 상세</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <tr style="background:#0288d1;color:#fff"><th style="padding:7px 10px;text-align:left">항목</th><th style="padding:7px 10px;text-align:left">값</th></tr>
+          ${elev?.elevation!=null?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">해발고도</td><td style="padding:6px 10px;font-weight:600">${elev.elevation}m</td></tr>`:''}
+          ${elev?.slope!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">경사도</td><td style="padding:6px 10px;font-weight:600">${elev.slope}°</td></tr>`:''}
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">토성 (토양유형)</td><td style="padding:6px 10px;font-weight:600">${soil.soil_type||'—'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">배수 등급</td><td style="padding:6px 10px;font-weight:600">${soil.drainage||'—'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">토양 pH</td><td style="padding:6px 10px;font-weight:600">${soil.ph||'—'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">유기물 함량</td><td style="padding:6px 10px;font-weight:600">${soil.om!=null?soil.om+'%':'—'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">유효토심</td><td style="padding:6px 10px;font-weight:600">${soil.effectiveDepth!=null?soil.effectiveDepth+'cm':'—'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">자갈 함량</td><td style="padding:6px 10px;font-weight:600">${soil.gravelPct!=null?soil.gravelPct+'%':'—'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">지하수위</td><td style="padding:6px 10px;font-weight:600">${soil.gw!=null?soil.gw+'m':'—'}</td></tr>
+          ${soil.geography&&soil.geography!=='—'?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">분포지형</td><td style="padding:6px 10px;font-weight:600">${soil.geography}</td></tr>`:''}
+        </table>
+        ${soil.implications?.length?`<div style="margin-top:8px">${soil.implications.map(i=>`<div style="font-size:11px;color:#546e7a;padding:2px 0">${i}</div>`).join('')}</div>`:''}
+      </div>
+
       <!-- 수환경 분석 -->
       <div style="margin-bottom:20px">
         <div style="font-size:14px;font-weight:700;color:#0288d1;border-bottom:2px solid #0288d1;padding-bottom:4px;margin-bottom:10px">💧 수환경 분석</div>
@@ -4370,6 +4411,37 @@ async function downloadPDF(){
             <td style="padding:6px 10px;color:#546e7a;font-weight:500">경관 품질 점수</td>
             <td style="padding:6px 10px;font-weight:600">${lsc.viewQuality}점</td>
           </tr>
+        </table>
+      </div>
+
+      <!-- 생태·겨울철새 상세 -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:14px;font-weight:700;color:#0288d1;border-bottom:2px solid #0288d1;padding-bottom:4px;margin-bottom:10px">🌿 생태·겨울철새 상세</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">
+          <tr style="background:#0288d1;color:#fff"><th style="padding:7px 10px;text-align:left">항목</th><th style="padding:7px 10px;text-align:left">값</th></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">생태자연도 등급</td><td style="padding:6px 10px;font-weight:600">${eco.grade_text||eco.grade+'등급'||'—'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">국토환경성 등급</td><td style="padding:6px 10px;font-weight:600">${evg?.label||'—'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">수목 피복률</td><td style="padding:6px 10px;font-weight:600">${eco.treeCov!=null?eco.treeCov+'%':'—'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">습지 존재</td><td style="padding:6px 10px;font-weight:600">${eco.hasWetland?'있음':'없음'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">겨울철새 도래 가능성</td><td style="padding:6px 10px;font-weight:600">${wb?.probability||'—'} ${wb?.confidence!=null?`(신뢰도 ${wb.confidence}%)`:''}</td></tr>
+          ${wb?.nearby?.length?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">인근 도래지</td><td style="padding:6px 10px;font-weight:600">${wb.nearby.slice(0,3).map(n=>`${n.name} (${n.d.toLocaleString()}m)`).join(' · ')}</td></tr>`:''}
+          ${wb?.repSpecies?.length?`<tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">주요 도래종</td><td style="padding:6px 10px;font-weight:600">${wb.repSpecies.join(' · ')}</td></tr>`:''}
+        </table>
+        ${eco.species?.length?`<div style="margin-top:6px"><div style="font-size:11px;font-weight:700;color:#c62828;margin-bottom:4px">🦎 멸종위기종 확인</div>${eco.species.map(s=>`<span style="font-size:10px;background:#ffebee;border:1px solid #ef9a9a;padding:2px 8px;border-radius:4px;margin-right:4px;margin-bottom:4px;display:inline-block">${s.icon||''} ${s.name} (${s.status})</span>`).join('')}</div>`:'<div style="font-size:11px;color:#78909c">멸종위기종 미확인 (반경 내)</div>'}
+        ${wb?.basis?.length?`<div style="margin-top:6px">${wb.basis.map(b=>`<div style="font-size:10px;color:#78909c">📋 ${b}</div>`).join('')}</div>`:''}
+      </div>
+
+      <!-- 인프라·접근성 -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:14px;font-weight:700;color:#0288d1;border-bottom:2px solid #0288d1;padding-bottom:4px;margin-bottom:10px">🏗️ 인프라·접근성</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <tr style="background:#0288d1;color:#fff"><th style="padding:7px 10px;text-align:left">항목</th><th style="padding:7px 10px;text-align:left">값</th></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">지하철 거리</td><td style="padding:6px 10px;font-weight:600">${trf.subDist!=null?trf.subDist+'m':'—'} ${trf.subName?`(${trf.subName})`:''}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">버스정류장</td><td style="padding:6px 10px;font-weight:600">${trf.busStops!=null?trf.busStops+'개소 (반경 내)':'—'}</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">자전거도로</td><td style="padding:6px 10px;font-weight:600">${trf.hasBike?'있음':'없음'}</td></tr>
+          <tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">일평균 보행량</td><td style="padding:6px 10px;font-weight:600">${trf.peds!=null?trf.peds.toLocaleString()+'명':'미연동'} (${trf.pedLv||'—'})</td></tr>
+          <tr style="background:#f5f5f5"><td style="padding:6px 10px;color:#546e7a;font-weight:500">도시 공원 계획</td><td style="padding:6px 10px;font-weight:600">${urb.greenPlan?'있음':'없음'}</td></tr>
+          ${soc.popD!=null?`<tr style="background:#fff"><td style="padding:6px 10px;color:#546e7a;font-weight:500">인구 밀도</td><td style="padding:6px 10px;font-weight:600">${soc.popD.toLocaleString()}명/㎢</td></tr>`:''}
         </table>
       </div>
 
