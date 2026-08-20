@@ -2336,7 +2336,7 @@ const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
   let grade=minD<500?nearNode.grade:minD<1000?Math.min(nearNode.grade+1,4):minD<2000?Math.min(nearNode.grade+2,5):pick(rng,[3,4,5,5]);
 
   const specPool={
-    1:[{name:'수달',icon:'🦦',status:'멸종위기 I급',risk:'critical'},{name:'황조롱이',icon:'🦅',status:'천연기념물 323호',risk:'critical'},{name:'맹꽁이',icon:'🐸',status:'멸종위기 II급',risk:'high'}],
+    1:[{name:'수달',icon:'🦦',status:'멸종위기 I급',risk:'critical'},{name:'맹꽁이',icon:'🐸',status:'멸종위기 II급',risk:'high'}],
     2:[{name:'흰목물떼새',icon:'🐦',status:'멸종위기 II급',risk:'high'},{name:'삵',icon:'🐱',status:'멸종위기 II급',risk:'high'},{name:'원앙',icon:'🦆',status:'천연기념물 327호',risk:'high'}],
     3:[{name:'왜가리',icon:'🦢',status:'일반종',risk:'low'},{name:'백로',icon:'🕊️',status:'일반종',risk:'low'}]
   };
@@ -3447,7 +3447,42 @@ function buildRegulation(urb, eco, water, soil, lsc) {
   if (water.floodRisk !== '낮음') reviewNeeded.push('홍수위험지도 확인 — 침수방지시설 계획 검토');
   if (eco.species && eco.species.some(s=>['critical','high'].includes(s.risk))) reviewNeeded.push('멸종위기종 서식 — 자연환경보전법 제49조 저촉 검토');
 
-  return { zone, fsr, bcr, greenArea, freeActions, prohibited, conditional, reviewNeeded };
+  // 확인된 법적 항목 (API 데이터 기반)
+  const legalItems = [];
+  // 생태자연도
+  if (eco.grade) {
+    const ecoLabel = eco.grade===1?'1등급 (보전 최우선)':eco.grade===2?'2등급 (보전 권고)':eco.grade===3?'3등급 (완충)':'4등급 이하';
+    const ecoLaw = eco.grade<=2?'자연환경보전법 제34조':'—';
+    legalItems.push({ label:'생태자연도', value:ecoLabel, law:ecoLaw, status:eco.grade<=2?'warn':'ok', source:'국립생태원' });
+  }
+  // 멸종위기종
+  if (eco.species && eco.species.length > 0) {
+    const names = eco.species.slice(0,3).map(s=>`${s.icon}${s.name}`).join(', ');
+    legalItems.push({ label:'멸종위기종', value:names, law:'자연환경보전법 제49조', status:'warn', source:'국립생물자원관' });
+  }
+  // 홍수위험도
+  if (water && water.floodRisk) {
+    const floodStatus = water.floodRisk==='높음'?'warn':water.floodRisk==='중간'?'caution':'ok';
+    legalItems.push({ label:'홍수위험도', value:water.floodRisk, law:water.floodRisk!=='낮음'?'자연재해대책법':'—', status:floodStatus, source:'국토부 홍수위험지도' });
+  }
+  // 용도지역
+  if (zone && zone!=='확인필요' && zone!=='미확인') {
+    legalItems.push({ label:'용도지역', value:zone+(fsr?` (용적률 ${fsr}%·건폐율 ${bcr}%)` : ''), law:'국토계획법 시행령', status:'ok', source:'VWorld 국토부' });
+  }
+  // 용도지구
+  if (urb && urb.districtNames && urb.districtNames.length > 0) {
+    legalItems.push({ label:'용도지구', value:urb.districtNames.join(', '), law:'국토계획법', status:'warn', source:'VWorld 국토부' });
+  }
+  // 개발제한구역 — 해당 시에만 표시
+  if (urb && urb.greenbelt) {
+    legalItems.push({ label:'개발제한구역', value:'해당', law:'개발제한구역법 제12조', status:'warn', source:'VWorld 국토부' });
+  }
+  // 자연공원 — 해당 시에만 표시
+  if (urb && urb.inNaturalPark) {
+    legalItems.push({ label:'자연공원', value:'포함', law:'자연공원법', status:'warn', source:'VWorld 국토부' });
+  }
+
+  return { zone, fsr, bcr, greenArea, freeActions, prohibited, conditional, reviewNeeded, legalItems };
 }
 
 // ════════════════════════════════════════════
@@ -3760,11 +3795,7 @@ function renderResults(d){
         <div class="stype-reg-badge stype-reg-${st.regulatory.statusCode}">⚖️ ${st.regulatory.status}</div>
         <div class="stype-freedom-badge">설계 자유도: ${st.designFreedom.level}</div>
       </div>
-      <div style="font-size:9px;color:#37474f;margin-bottom:10px">근거: ${st.regulatory.basis}</div>
 
-      <!-- 핵심 설계 전략 -->
-      <div style="font-size:10px;font-weight:700;color:#4fc3f7;margin-bottom:6px">🎯 ${st.primary.label} 핵심 전략</div>
-      ${st.strategies.slice(0,3).map((s,i)=>`<div class="stype-strat-row"><span class="stype-strat-num">${i+1}</span>${s}</div>`).join('')}
     </div>
 
     <!-- ⚖️ 규제 분석 블록 -->
@@ -3782,25 +3813,17 @@ function renderResults(d){
         <span class="reg-meta-chip">조경: ${reg.greenArea.split(' ')[0]} ${reg.greenArea.split(' ')[1]||''}</span>`}
       </div>
 
-      <!-- 4칸 규제 그리드 -->
-      <div class="reg-grid-4">
-        <div class="reg-col reg-free">
-          <div class="reg-col-title">✅ 설계 가능범위</div>
-          ${reg.freeActions.map(a=>`<div class="reg-item">${a}</div>`).join('')}
-        </div>
-        <div class="reg-col reg-ban">
-          <div class="reg-col-title">⛔ 금지행위</div>
-          ${reg.prohibited.map(a=>`<div class="reg-item">${a}</div>`).join('')}
-        </div>
-        <div class="reg-col reg-cond">
-          <div class="reg-col-title">⚠️ 조건부 허용</div>
-          ${reg.conditional.map(a=>`<div class="reg-item">${a}</div>`).join('')}
-        </div>
-        <div class="reg-col reg-review">
-          <div class="reg-col-title">🔍 검토 필요</div>
-          ${reg.reviewNeeded.map(a=>`<div class="reg-item">${a}</div>`).join('')}
-        </div>
-      </div>
+      <!-- 법적 항목 테이블 -->
+      ${reg.legalItems && reg.legalItems.length ? `
+      <div style="margin-top:10px">
+        ${reg.legalItems.map(item=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1e3a4f;font-size:11px">
+          <span style="color:#546e7a;min-width:70px;flex-shrink:0">${item.label}</span>
+          <span style="color:${item.status==='warn'?'#ffb74d':item.status==='caution'?'#fff176':item.status==='none'?'#546e7a':'#a5d6a7'};flex:1">${item.value}</span>
+          ${item.law&&item.law!=='—'?`<span style="font-size:9px;color:#455a64;background:#1e3a4f;padding:2px 6px;border-radius:3px;flex-shrink:0">${item.law}</span>`:''}
+        </div>`).join('')}
+      </div>` : ''}
+
     </div>
 
     <!-- 🌡️ 환경 기준 적합성 검토 카드 — 실측 지표 있을 때만 표시 -->
@@ -3892,17 +3915,6 @@ function renderResults(d){
       <div class="tab-content active" id="tab-anomaly">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:6px;letter-spacing:.06em">── Opportunities · Constraints ──</div>
         <div class="anomaly-list">${anomalyHtml}</div>
-        <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
-        <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 분석 순서 (Desktop Study) ──</div>
-        <div style="font-size:11px;color:#78909c;line-height:1.7;padding:4px 0">
-          ① 기후·기상 — 기온·강수·내한성·풍향 확인<br>
-          ② 지형·토양 — 고도·경사·토성·pH·지하수위<br>
-          ③ 수문·배수 — 홍수·불투수율·LID 가능성<br>
-          ④ 식생·생태 — 자연도·비오톱·멸종위기종<br>
-          ⑤ 인프라 — 교통·접근·소음·건물·유틸리티<br>
-          ⑥ 법적·사회 — 용도지역·규제·녹지율·이용자<br>
-          <span style="color:#4fc3f7">→ 현장 답사 후 Overlay Diagram 제작</span>
-        </div>
       </div>
 
       <div class="tab-content" id="tab-eco">
@@ -4515,10 +4527,6 @@ async function downloadPDF(){
             <span style="font-size:10px;font-weight:700;padding:4px 10px;border-radius:4px;background:${st.regulatory.statusCode==='forbidden'?'#ffebee':st.regulatory.statusCode==='conditional'?'#fff3e0':st.regulatory.statusCode==='review'?'#fffde7':'#e8f5e9'};color:${st.regulatory.statusCode==='forbidden'?'#c62828':st.regulatory.statusCode==='conditional'?'#e65100':st.regulatory.statusCode==='review'?'#f57f17':'#2e7d32'}">⚖️ ${st.regulatory.status}</span>
             <span style="font-size:10px;font-weight:700;padding:4px 10px;border-radius:4px;background:#e3f2fd;color:#1565c0">설계 자유도: ${st.designFreedom.level}</span>
           </div>
-          <div style="font-size:9px;color:#78909c;margin-bottom:10px">근거: ${st.regulatory.basis}</div>
-          <!-- 핵심 전략 -->
-          <div style="font-size:11px;font-weight:700;color:#1565c0;margin-bottom:6px">🎯 핵심 설계 전략</div>
-          ${st.strategies.map((s,i)=>`<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #e3f2fd;font-size:10px;color:#37474f"><span style="font-weight:700;color:#1565c0;flex-shrink:0">${i+1}</span>${s}</div>`).join('')}
         </div>
       </div>
 
@@ -4574,20 +4582,6 @@ ${pf.indicators.filter(ind=>['air','hydro','heat'].includes(ind.key)).map((ind,i
               : `<span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">건폐율 max ${reg.bcr}%</span>
             <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">용적률 max ${reg.fsr}%</span>`}
           </div>
-          <table style="width:100%;border-collapse:collapse;font-size:10px">
-            <tr>
-              <th style="padding:6px;background:#e8f5e9;color:#2e7d32;text-align:left;border:1px solid #c8e6c9;width:25%">✅ 설계 가능범위</th>
-              <th style="padding:6px;background:#ffebee;color:#c62828;text-align:left;border:1px solid #ffcdd2;width:25%">⛔ 금지행위</th>
-              <th style="padding:6px;background:#fff3e0;color:#e65100;text-align:left;border:1px solid #ffe0b2;width:25%">⚠️ 조건부 허용</th>
-              <th style="padding:6px;background:#e3f2fd;color:#1565c0;text-align:left;border:1px solid #bbdefb;width:25%">🔍 검토 필요</th>
-            </tr>
-            <tr>
-              <td style="padding:6px;border:1px solid #e0e0e0;vertical-align:top">${reg.freeActions.map(a=>`<div style="font-size:9px;padding:1px 0">${a}</div>`).join('')}</td>
-              <td style="padding:6px;border:1px solid #e0e0e0;vertical-align:top">${reg.prohibited.map(a=>`<div style="font-size:9px;padding:1px 0">${a}</div>`).join('')}</td>
-              <td style="padding:6px;border:1px solid #e0e0e0;vertical-align:top">${reg.conditional.map(a=>`<div style="font-size:9px;padding:1px 0">${a}</div>`).join('')}</td>
-              <td style="padding:6px;border:1px solid #e0e0e0;vertical-align:top">${reg.reviewNeeded.map(a=>`<div style="font-size:9px;padding:1px 0">${a}</div>`).join('')}</td>
-            </tr>
-          </table>
         </div>
       </div>
 
@@ -5258,12 +5252,13 @@ async function fetchEcoGrade(pnu){
     const raw=d.response?.body?.items?.item;
     const arr=Array.isArray(raw)?raw:raw?[raw]:[];
     if(!arr.length) return null;
-    // 1등급이 최우선 보전 — 가장 엄격한 등급 반환
-    const grades=arr.map(x=>parseInt(x.eczmGr)||9).filter(n=>n<=3);
-    const minGrade=grades.length?Math.min(...grades):null;
-    const topItem=arr.find(x=>parseInt(x.eczmGr)===minGrade)||arr[0];
+    // 읍면동 내 최빈 등급 사용 (min은 읍면동 내 타 구역 1등급으로 오탐 가능)
+    const grades=arr.map(x=>parseInt(x.eczmGr)||9).filter(n=>n<=5);
+    const freq={};grades.forEach(g=>{freq[g]=(freq[g]||0)+1;});
+    const modeGrade=grades.length?parseInt(Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0]):null;
+    const topItem=arr.find(x=>parseInt(x.eczmGr)===modeGrade)||arr[0];
     return{
-      grade:minGrade,
+      grade:modeGrade,
       vtnGrade:parseInt(topItem.vtnEvlGr)||null,
       ampltGrade:parseInt(topItem.ampltEvlGr)||null,
       smldGrade:parseInt(topItem.smldEvlGr)||null,
