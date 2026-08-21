@@ -2118,7 +2118,7 @@ async function getWeather(c){
 // ════════════════════════════════════════════
 function buildEcology(c,osm,elev){const {lat,lng}=c;const rng=seededRng(lat,lng,1);const grade=osm?osm.ecoGrade:Math.floor(rng()*5)+1;const treeCov=osm?osm.treeCov:Math.round(rng()*30+5);const hasWetland=osm?osm.hasWetland:rng()<0.2;const nearHan=osm?osm.hasMajorRiver:false;
 // specPool: 생태등급 기반 예측 후보종 (실제 서식 확인 아님 — NIBR API 연동 시 대체됨)
-const specPool={1:[{name:'수달',icon:'🦦',status:'멸종위기 I급',risk:'critical',simulated:true},{name:'황조롱이',icon:'🦅',status:'천연기념물 323호',risk:'critical',simulated:true},{name:'맹꽁이',icon:'🐸',status:'멸종위기 II급',risk:'high',simulated:true}],2:[{name:'흰목물떼새',icon:'🐦',status:'멸종위기 II급',risk:'high',simulated:true},{name:'삵',icon:'🐱',status:'멸종위기 II급',risk:'high',simulated:true},{name:'원앙',icon:'🦆',status:'천연기념물 327호',risk:'high',simulated:true}],3:[{name:'왜가리',icon:'🦢',status:'일반종',risk:'low',simulated:true},{name:'백로',icon:'🕊️',status:'일반종',risk:'low',simulated:true}]};let species=[];if(grade<=2){const pool=[...(specPool[grade]||[]),...(specPool[3]||[])];const n=Math.min(2,pool.length);for(let i=0;i<n;i++)species.push(pool[Math.floor(rng()*pool.length)]);}if(nearHan)species.push({name:'갈매기류',icon:'🐦',status:'겨울철새',risk:'low',simulated:true});const grade_text=['최우수(1등급)','우수(2등급)','양호(3등급)','보통(4등급)','불량(5등급)'][grade-1];const grade_color=['#1a5276','#1e8449','#d4ac0d','#ca6f1e','#922b21'][grade-1];const protected_=[];if(nearHan)protected_.push('수변 자연경관');if(hasWetland)protected_.push('습지 보전 구역');if(osm&&osm.hasNaturalWood)protected_.push('수목 보전지');const imp=[];if(grade<=2)imp.push('⚠️ 생태 보전 최우선 — 훼손 최소화 설계');if(species.some(s=>['critical','high'].includes(s.risk)))imp.push('🛡️ 멸종위기종 — 생태통로·완충녹지 설치 권장');if(hasWetland)imp.push('💧 습지 보전 — 자연형 호안·투수포장');if(grade>=4)imp.push('🌱 생태 복원 잠재력 — 도시 생태 네트워크 거점 가능');if(nearHan)imp.push('🌊 수변 생태축 연계 가능');const nearNodeName=osm&&osm.nearestStation?(osm.nearestStation.tags&&osm.nearestStation.tags.name)||'인근역':null;const nearNodeDist=osm?osm.nearestStationDist:999;return {grade,grade_text,grade_color,species,hasWetland,treeCov,protected_,nearHan,nearNodeName,nearNodeDist,implications:imp,source:osm?'실제 (OpenStreetMap)':'시뮬레이션',reliability:osm?'real':'simulated'};}
+const specPool={1:[{name:'수달',icon:'🦦',status:'멸종위기 I급',risk:'critical',simulated:true},{name:'맹꽁이',icon:'🐸',status:'멸종위기 II급',risk:'high',simulated:true}],2:[{name:'흰목물떼새',icon:'🐦',status:'멸종위기 II급',risk:'high',simulated:true},{name:'삵',icon:'🐱',status:'멸종위기 II급',risk:'high',simulated:true},{name:'원앙',icon:'🦆',status:'천연기념물 327호',risk:'high',simulated:true}],3:[{name:'왜가리',icon:'🦢',status:'일반종',risk:'low',simulated:true},{name:'백로',icon:'🕊️',status:'일반종',risk:'low',simulated:true}]};let species=[];if(grade<=2){const pool=[...(specPool[grade]||[]),...(specPool[3]||[])];const n=Math.min(2,pool.length);for(let i=0;i<n;i++)species.push(pool[Math.floor(rng()*pool.length)]);}if(nearHan)species.push({name:'갈매기류',icon:'🐦',status:'겨울철새',risk:'low',simulated:true});const grade_text=['최우수(1등급)','우수(2등급)','양호(3등급)','보통(4등급)','불량(5등급)'][grade-1];const grade_color=['#1a5276','#1e8449','#d4ac0d','#ca6f1e','#922b21'][grade-1];const protected_=[];if(nearHan)protected_.push('수변 자연경관');if(hasWetland)protected_.push('습지 보전 구역');if(osm&&osm.hasNaturalWood)protected_.push('수목 보전지');const imp=[];if(grade<=2)imp.push('⚠️ 생태 보전 최우선 — 훼손 최소화 설계');if(species.some(s=>['critical','high'].includes(s.risk)))imp.push('🛡️ 멸종위기종 — 생태통로·완충녹지 설치 권장');if(hasWetland)imp.push('💧 습지 보전 — 자연형 호안·투수포장');if(grade>=4)imp.push('🌱 생태 복원 잠재력 — 도시 생태 네트워크 거점 가능');if(nearHan)imp.push('🌊 수변 생태축 연계 가능');const nearNodeName=osm&&osm.nearestStation?(osm.nearestStation.tags&&osm.nearestStation.tags.name)||'인근역':null;const nearNodeDist=osm?osm.nearestStationDist:999;return {grade,grade_text,grade_color,species,hasWetland,treeCov,protected_,nearHan,nearNodeName,nearNodeDist,implications:imp,source:osm?'실제 (OpenStreetMap)':'시뮬레이션',reliability:osm?'real':'simulated'};}
 
 // 내한성 구역 추정 (USDA Zone, 위도 기반)
 function calcHardinessZone(lat){
@@ -3402,7 +3402,7 @@ function buildRegulation(urb, eco, water, soil, lsc) {
 
   // ① 설계 가능범위
   // 규제 우선순위: 그린벨트 > 생태1등급 > 용도지역 미확인
-  const isEco1 = eco.grade === 1;
+  const isEco1 = eco.grade === 1 && eco.reliability !== 'simulated';
   const isGreenbelt = urb && urb.greenbelt;
   const zoneConfirmed = urb && urb.fsr && urb.bcr && zone !== '미확인' && zone !== '확인필요';
   const freeActions = isGreenbelt ? [
@@ -3446,39 +3446,73 @@ function buildRegulation(urb, eco, water, soil, lsc) {
   if (water.floodRisk !== '낮음') reviewNeeded.push('홍수위험지도 확인 — 침수방지시설 계획 검토');
   if (eco.species && eco.species.some(s=>['critical','high'].includes(s.risk))) reviewNeeded.push('멸종위기종 서식 — 자연환경보전법 제49조 저촉 검토');
 
-  // 확인된 법적 항목 (API 데이터 기반)
+  // 확인된 법적 항목 (실제 API 데이터만 표시)
   const legalItems = [];
-  // 생태자연도
-  if (eco.grade) {
+  // 생태자연도 — 실측 데이터만 표시
+  if (eco.grade && eco.reliability !== 'simulated') {
     const ecoLabel = eco.grade===1?'1등급 (보전 최우선)':eco.grade===2?'2등급 (보전 권고)':eco.grade===3?'3등급 (완충)':'4등급 이하';
     const ecoLaw = eco.grade<=2?'자연환경보전법 제34조':'—';
-    legalItems.push({ label:'생태자연도', value:ecoLabel, law:ecoLaw, status:eco.grade<=2?'warn':'ok', source:'국립생태원' });
+    legalItems.push({ label:'생태자연도', value:ecoLabel, law:ecoLaw, status:eco.grade<=2?'warn':'ok', source:'국립생태원 WMS' });
   }
-  // 멸종위기종
-  if (eco.species && eco.species.length > 0) {
-    const names = eco.species.slice(0,3).map(s=>`${s.icon}${s.name}`).join(', ');
+  // 멸종위기종 — 실측 데이터만 (simulated:true 제외)
+  const realSpecies = (eco.species||[]).filter(s=>!s.simulated);
+  if (realSpecies.length > 0) {
+    const names = realSpecies.slice(0,3).map(s=>`${s.icon}${s.name}`).join(', ');
     legalItems.push({ label:'멸종위기종', value:names, law:'자연환경보전법 제49조', status:'warn', source:'국립생물자원관' });
   }
-  // 홍수위험도
-  if (water && water.floodRisk) {
+  // 홍수위험도 — 실측·부분실측만 표시
+  if (water && water.floodRisk && water.floodReliability && water.floodReliability !== 'simulated') {
     const floodStatus = water.floodRisk==='높음'?'warn':water.floodRisk==='중간'?'caution':'ok';
     legalItems.push({ label:'홍수위험도', value:water.floodRisk, law:water.floodRisk!=='낮음'?'자연재해대책법':'—', status:floodStatus, source:'국토부 홍수위험지도' });
   }
-  // 용도지역
+  // 용도지역 — 실측 데이터만
   if (zone && zone!=='확인필요' && zone!=='미확인') {
-    legalItems.push({ label:'용도지역', value:zone+(fsr?` (용적률 ${fsr}%·건폐율 ${bcr}%)` : ''), law:'국토계획법 시행령', status:'ok', source:'VWorld 국토부' });
+    legalItems.push({ label:'용도지역', value:zone+(fsr?` (용적률 ${fsr}%·건폐율 ${bcr}%)` : ''), law:'국토계획법 시행령', status:'ok', source:'VWorld NED WFS' });
   }
-  // 용도지구
-  if (urb && urb.districtNames && urb.districtNames.length > 0) {
-    legalItems.push({ label:'용도지구', value:urb.districtNames.join(', '), law:'국토계획법', status:'warn', source:'VWorld 국토부' });
+
+  // VWorld NED WFS 규제목록 (prpos_area_dstrc_nm_list) — 항목별 분류
+  const REG_MAP = [
+    { k:'개발제한구역',     law:'개발제한구역법 제12조',               status:'warn'    },
+    { k:'자연보전권역',     law:'수도권정비계획법 제6조',              status:'warn'    },
+    { k:'성장관리권역',     law:'수도권정비계획법 제6조',              status:'caution' },
+    { k:'과밀억제권역',     law:'수도권정비계획법 제6조',              status:'caution' },
+    { k:'상수원보호구역',   law:'수도법 제7조',                        status:'warn'    },
+    { k:'특별대책지역',     law:'환경정책기본법 제38조',               status:'warn'    },
+    { k:'팔당',             law:'환경정책기본법 제38조',               status:'warn'    },
+    { k:'대청호',           law:'환경정책기본법 제38조',               status:'warn'    },
+    { k:'폐수배출',         law:'물환경보전법 제33조',                 status:'warn'    },
+    { k:'배출시설 설치제한',law:'물환경보전법 제33조',                 status:'warn'    },
+    { k:'가축사육',         law:'가축분뇨법 제8조',                    status:'warn'    },
+    { k:'하천구역',         law:'하천법 제10조',                       status:'caution' },
+    { k:'홍수관리구역',     law:'자연재해대책법 제12조',               status:'caution' },
+    { k:'겨울철새',         law:'야생생물 보호 및 관리에 관한 법률',   status:'warn'    },
+    { k:'야생생물',         law:'야생생물 보호 및 관리에 관한 법률',   status:'warn'    },
+    { k:'문화재',           law:'문화재보호법 제35조',                 status:'warn'    },
+    { k:'자연공원',         law:'자연공원법 제18조',                   status:'warn'    },
+    { k:'경관지구',         law:'국토계획법 제37조',                   status:'caution' },
+    { k:'최고고도지구',     law:'국토계획법 제37조',                   status:'caution' },
+    { k:'방화지구',         law:'국토계획법 제37조',                   status:'caution' },
+    { k:'도시자연공원',     law:'도시공원법',                          status:'warn'    },
+    { k:'군사기지',         law:'군사기지법 제9조',                    status:'warn'    },
+  ];
+
+  if (urb && urb.restr && urb.restr.length > 0) {
+    urb.restr.forEach(item => {
+      // 이미 용도지역으로 표시된 항목은 스킵
+      if (item === zone) return;
+      // 용도지역 계열 (지역명 포함) → 법정 FSR/BCR 없이 별도 표시
+      const isZoneType = item.includes('지역') && !item.includes('보호구역') && !item.includes('특별대책지역') && !item.includes('제한구역');
+      if (isZoneType) {
+        legalItems.push({ label: item, value: '해당', law: '국토계획법 시행령', status: 'ok', source: 'VWorld NED WFS' });
+        return;
+      }
+      const match = REG_MAP.find(r => item.includes(r.k));
+      legalItems.push({ label: item, value: '해당', law: match ? match.law : '관련 법령 확인 필요', status: match ? match.status : 'caution', source: 'VWorld NED WFS' });
+    });
   }
-  // 개발제한구역 — 해당 시에만 표시
-  if (urb && urb.greenbelt) {
-    legalItems.push({ label:'개발제한구역', value:'해당', law:'개발제한구역법 제12조', status:'warn', source:'VWorld 국토부' });
-  }
-  // 자연공원 — 해당 시에만 표시
-  if (urb && urb.inNaturalPark) {
-    legalItems.push({ label:'자연공원', value:'포함', law:'자연공원법', status:'warn', source:'VWorld 국토부' });
+  // 자연공원 — nedZoneList에 없을 때 Data API 결과 보완
+  if (urb && urb.inNaturalPark && !urb.restr?.some(r=>r.includes('자연공원'))) {
+    legalItems.push({ label:'자연공원', value:'포함', law:'자연공원법 제18조', status:'warn', source:'VWorld 국토부' });
   }
 
   return { zone, fsr, bcr, greenArea, freeActions, prohibited, conditional, reviewNeeded, legalItems };
