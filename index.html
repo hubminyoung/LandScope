@@ -807,8 +807,7 @@ async function runAnalysis(){
       coords=await geocode(address);
     }
     window._savedMapCoords=null; // 소비 후 초기화
-    ld.style.display='none'; btn.disabled=false;
-    showLocationPreview(address, coords);
+    await _doAnalysis(address, coords);
   }catch(e){
     ld.style.display='none'; btn.disabled=false;
     alert('위치 검색 오류:\n'+e.message);
