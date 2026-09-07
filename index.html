@@ -450,22 +450,6 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <div id="pickHint" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#0288d1ee;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;pointer-events:none;z-index:2000;text-align:center;backdrop-filter:blur(4px);">
       📍 분석할 위치를 클릭하세요<br><span style="font-size:10px;font-weight:400;opacity:.85">ESC 또는 버튼 재클릭으로 취소</span>
     </div>
-    <!-- 위치 확인 floating card -->
-    <div id="locConfirm" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:2100;background:#1a2a3a;border:1.5px solid #0288d1;border-radius:14px;padding:14px 18px;min-width:280px;max-width:420px;box-shadow:0 4px 24px #000a;backdrop-filter:blur(8px);">
-      <div style="display:flex;align-items:flex-start;gap:10px;">
-        <div style="font-size:22px;margin-top:1px;">📍</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:11px;color:#4fc3f7;font-weight:700;margin-bottom:3px;letter-spacing:.3px;">이 위치가 맞나요?</div>
-          <div id="locConfirmName" style="font-size:12px;color:#cfd8dc;line-height:1.4;word-break:break-all;"></div>
-          <div id="locConfirmCoord" style="font-size:10px;color:#546e7a;margin-top:3px;"></div>
-        </div>
-        <button onclick="cancelLocation()" style="background:none;border:none;color:#546e7a;cursor:pointer;font-size:16px;padding:0;line-height:1;" title="취소">✕</button>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button onclick="confirmLocation()" style="flex:1;background:#0288d1;color:#fff;border:none;border-radius:8px;padding:9px 0;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">✅ 이 위치로 분석</button>
-        <button onclick="retryLocation()" style="flex:0 0 auto;background:#1e3a4f;color:#b0bec5;border:1px solid #2e4a5f;border-radius:8px;padding:9px 14px;font-size:12px;cursor:pointer;font-family:inherit;">🔄 다시 검색</button>
-      </div>
-    </div>
 
     </div>
   </div>
@@ -814,54 +798,6 @@ async function runAnalysis(){
   }
 }
 
-function showLocationPreview(address, coords){
-  pendingCoords=coords; pendingAddress=address;
-  // 기존 preview 마커 제거
-  if(previewMarker){map.removeLayer(previewMarker);previewMarker=null;}
-  // 반투명 주황 핀으로 preview 표시
-  const pvIcon=L.divIcon({
-    html:`<div style="width:24px;height:36px;position:relative;">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36">
-        <path fill="#ff8f00" d="M12 0 C5.4 0 0 5.4 0 12 c0 9.5 12 24 12 24s12-14.5 12-24 c0-6.6 -5.4-12 -12-12z"/>
-        <circle cx="12" cy="12" r="5" fill="#fff"/>
-        <circle cx="12" cy="12" r="3" fill="#ff8f00"/>
-      </svg>
-    </div>`,
-    iconSize:[24,36],iconAnchor:[12,36],className:''
-  });
-  previewMarker=L.marker([coords.lat,coords.lng],{icon:pvIcon,zIndexOffset:1000})
-    .addTo(map);
-  map.flyTo([coords.lat,coords.lng],15,{duration:1.2});
-  // 확인 카드 표시
-  const short=coords.name?coords.name.split(',').slice(0,3).join(','):'위치 확인 필요';
-  document.getElementById('locConfirmName').textContent=short;
-  document.getElementById('locConfirmCoord').textContent=`위도 ${coords.lat.toFixed(5)}, 경도 ${coords.lng.toFixed(5)}`;
-  document.getElementById('locConfirm').style.display='block';
-}
-
-function confirmLocation(){
-  document.getElementById('locConfirm').style.display='none';
-  if(previewMarker){map.removeLayer(previewMarker);previewMarker=null;}
-  if(pendingCoords&&pendingAddress){
-    // 확인된 좌표를 저장 → 이후 분석 버튼 재클릭 시 재지오코딩 없이 동일 좌표 사용
-    window._savedMapCoords=pendingCoords;
-    _doAnalysis(pendingAddress, pendingCoords);
-  }
-}
-
-function retryLocation(){
-  document.getElementById('locConfirm').style.display='none';
-  if(previewMarker){map.removeLayer(previewMarker);previewMarker=null;}
-  pendingCoords=null; pendingAddress=null;
-  document.getElementById('address').focus();
-  document.getElementById('address').select();
-}
-
-function cancelLocation(){
-  document.getElementById('locConfirm').style.display='none';
-  if(previewMarker){map.removeLayer(previewMarker);previewMarker=null;}
-  pendingCoords=null; pendingAddress=null;
-}
 
 let _analysisRunning=false;
 let _pendingAnalysis=null; // 분석 중 클릭된 대기 좌표
@@ -2320,181 +2256,6 @@ function buildWater(c,osm,elev,realFlood,realNoise){
 }
 function buildLandscape(c,osm){const rng=seededRng(c.lat,c.lng,8);const bar=osm?osm.bar:+((0.2+rng()*0.4)).toFixed(2);const naturalPct=osm?osm.naturalPct:Math.round(rng()*40+5);const waterArea=osm?osm.waterPct:Math.round(rng()*10);const artificialGreen=osm?osm.artificialGreen:Math.round(rng()*15+5);const permeable=osm?osm.permeable:Math.round(rng()*20);const impervious=osm?osm.impervious:Math.round(rng()*50+10);const btGrade=osm?osm.ecoGrade:Math.ceil(rng()*5);const btGradeText=['I(보전최우수)','II(보전우수)','III(보전보통)','IV(개선가능)','V(개선필요)'][btGrade-1];const lsTypeOpts=osm&&osm.hasMajorRiver?'수변경관':osm&&osm.hasNaturalWood?'산림경관':pick(rng,['도시경관','주거경관','공원경관','역사문화경관']);const scenicLandmarks=[{name:'두물머리',lat:37.537,lng:127.500},{name:'팔당호',lat:37.527,lng:127.399},{name:'청평호',lat:37.742,lng:127.488},{name:'남이섬',lat:37.791,lng:127.526},{name:'북한강',lat:37.628,lng:127.494},{name:'소양강',lat:37.878,lng:127.730},{name:'한강공원(여의도)',lat:37.527,lng:126.933},{name:'한강공원(반포)',lat:37.512,lng:126.997}];const nearScenic=scenicLandmarks.find(lm=>dist(c.lat,c.lng,lm.lat,lm.lng)<5000);const scenicBonus=nearScenic?18:0;let viewQuality=osm?Math.round(bar*100+(btGrade<=2?15:0)):rndInt(rng,40,90);if(scenicBonus>0)viewQuality=Math.min(95,viewQuality+scenicBonus);const lsGrade=viewQuality>=80?'우수':viewQuality>=60?'양호':viewQuality>=40?'보통':'불량';const imp=[];if(bar<0.3)imp.push('🏜️ BAR 저조 — 녹지 확충 및 경관 개선 필요');if(bar>=0.5)imp.push('🌳 생태면적률 양호 — 생태 네트워크 유지');if(btGrade<=2)imp.push('🦋 비오톱 고등급 → 보전 우선');if((osm?osm.naturalPct:0)===0&&parseFloat(bar)>=0.3)imp.push('⚠️ 수목·자연녹지 0% — BAR 수치는 투수포장 기여분, 실질 녹지공간 조성 필요');if(nearScenic)imp.push(`🏞️ ${nearScenic.name} 인접(5km 이내) — 조망 가치 +${scenicBonus}점 보정`);if(viewQuality>70)imp.push('🎨 경관 가치 높음 — 시각 연계성 강화');const score=Math.max(0,Math.min(100,viewQuality+(bar>=0.5?15:bar>=0.3?5:-10)+(btGrade<=2?10:-5)));return {bar,naturalPct,natural:naturalPct,water:waterArea,artificialGreen,permeable,impervious,btGrade,btGradeText,lsType:lsTypeOpts,landType:lsTypeOpts,viewQuality,lsGrade,nearScenic:nearScenic||null,scenicBonus,historicElement:rng()<0.08,viewOpen:rng()<0.4,implications:imp,score:Math.round(score),source:osm?'실제 (OpenStreetMap 토지피복 기반 BAR)':'시뮬레이션',reliability:osm?'real':'simulated'};}
 
-function getEcology(c){
-  const {lat,lng}=c;
-  const rng=seededRng(lat,lng,1);
-  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
-const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
-  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
-  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
-  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
-));
-
-  let minD=999999,nearNode=null;
-  ECO_NODES.forEach(n=>{const d=dist(lat,lng,n.lat,n.lng);if(d<minD){minD=d;nearNode=n;}});
-  let grade=minD<500?nearNode.grade:minD<1000?Math.min(nearNode.grade+1,4):minD<2000?Math.min(nearNode.grade+2,5):pick(rng,[3,4,5,5]);
-
-  const specPool={
-    1:[{name:'수달',icon:'🦦',status:'멸종위기 I급',risk:'critical'},{name:'맹꽁이',icon:'🐸',status:'멸종위기 II급',risk:'high'}],
-    2:[{name:'흰목물떼새',icon:'🐦',status:'멸종위기 II급',risk:'high'},{name:'삵',icon:'🐱',status:'멸종위기 II급',risk:'high'},{name:'원앙',icon:'🦆',status:'천연기념물 327호',risk:'high'}],
-    3:[{name:'왜가리',icon:'🦢',status:'일반종',risk:'low'},{name:'백로',icon:'🕊️',status:'일반종',risk:'low'}]
-  };
-  let species=[];
-  if(grade<=2){
-    const pool=[...(specPool[grade]||[]),...(specPool[3]||[])];
-    // 중복 없이 pick — Fisher-Yates shuffle 앞 n개
-    const shuffled=pool.slice();
-    for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
-    species=shuffled.slice(0,Math.min(2,shuffled.length));
-  }
-  if(nearHan)species.push({name:'갈매기류',icon:'🐦',status:'겨울철새',risk:'low'});
-
-  const hasWetland=(nearHan&&rng()<0.55)||(grade<=2&&rng()<0.3);
-  const treeCov=grade===1?rndBetween(rng,35,70):grade===2?rndBetween(rng,20,45):grade===3?rndBetween(rng,10,25):rndBetween(rng,2,15);
-  const protected_=[]; if(nearNode&&minD<300)protected_.push(nearNode.name+' 인접'); if(nearHan)protected_.push('한강변 자연경관지구');
-
-  const imp=[];
-  if(grade<=2)imp.push('⚠️ 생태 보전 최우선 — 훼손 최소화 설계');
-  if(species.some(s=>['critical','high'].includes(s.risk)))imp.push('🛡️ 멸종위기종 — 생태통로·완충녹지 설치 권장');
-  if(hasWetland)imp.push('💧 습지 보전 — 자연형 호안·투수포장');
-  if(grade>=4)imp.push('🌱 생태 복원 잠재력 — 도시 생태 네트워크 거점 가능');
-  if(nearHan)imp.push('🌊 수변 생태축 연계 — 한강 생태벨트 가능');
-
-  return{grade,grade_text:['최우수(1등급)','우수(2등급)','양호(3등급)','보통(4등급)','불량(5등급)'][grade-1],
-    grade_color:['#1a5276','#1e8449','#d4ac0d','#ca6f1e','#922b21'][grade-1],
-    species,hasWetland,treeCov:+treeCov.toFixed(1),protected_,nearHan,
-    nearNodeName:nearNode?nearNode.name:null,nearNodeDist:Math.round(minD),implications:imp,
-    source:'시뮬레이션 (연동 예정: 국립생태원 API)',reliability:'simulated'};
-}
-
-function getSoil(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,2);
-  const nearRiver=(lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20);
-  const nearMtn=((lat>37.63&&lat<37.72&&lng>126.94&&lng<127.04)||(lat>37.54&&lat<37.57&&lng>126.97&&lng<127.00));
-  let soil_type,drainage,ph,om,gw,slope;
-  if(nearRiver){soil_type=pick(rng,['미사질양토','양토','사질양토']);drainage=pick(rng,['보통','불량','매우불량']);ph=+(5.4+rng()*.8).toFixed(1);om=+(0.8+rng()*1.7).toFixed(1);gw=+(0.5+rng()*2).toFixed(1);slope=+(rng()*3).toFixed(1);}
-  else if(nearMtn){soil_type=pick(rng,['양토','사양토']);drainage=pick(rng,['양호','불량']);ph=+(4.5+rng()*1.5).toFixed(1);om=+(2+rng()*3).toFixed(1);gw=+(3+rng()*7).toFixed(1);slope=+(5+rng()*25).toFixed(1);}
-  else{soil_type=pick(rng,['양토','식양토','사질양토','미사질양토']);drainage=pick(rng,['양호','양호','보통','불량']);ph=+(5.5+rng()*2).toFixed(1);om=+(0.5+rng()*2.5).toFixed(1);gw=+(2+rng()*6).toFixed(1);slope=+(rng()*15).toFixed(1);}
-  const ok=!['불량','매우불량'].includes(drainage)&&ph>=5.5&&ph<=7.0&&om>=1;
-  const imp=[];
-  if(['불량','매우불량'].includes(drainage))imp.push(`💧 배수 불량(${drainage}) → 습지형 식재 또는 암거 필요`);
-  if(ph<5.5)imp.push(`🌿 산성 토양(pH${ph}) → 석회 개량 또는 내산성 수종`);
-  if(ph>7.0)imp.push(`🌿 알칼리성(pH${ph}) → 황산비료 또는 내알칼리 수종`);
-  if(slope>15)imp.push(`⛰️ 급경사(${slope}°) → 지피식물·계단식 식재`);
-  if(om<1)imp.push('🌱 유기물 부족 → 유기질 개량재 투입');
-  if(gw<1.5)imp.push(`💧 지하수위 높음(${gw}m) → 심근성 수종 회피`);
-  return{soil_type,drainage,ph,om,gw,slope,ok,suitability:ok?'적합':'개량 필요',implications:imp,source:'시뮬레이션 (연동 예정: 흙토람 API)',reliability:'simulated'};
-}
-
-function getAir(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,5);
-  const d=dist(lat,lng,37.57,126.977);
-  let pm25,noise;
-  if(d<1000){pm25=rndInt(rng,25,55);noise=rndInt(rng,65,80);}
-  else if(d<3000){pm25=rndInt(rng,18,40);noise=rndInt(rng,55,70);}
-  else{pm25=rndInt(rng,10,30);noise=rndInt(rng,40,60);}
-  const pm25g=pm25<15?'좋음':pm25<35?'보통':pm25<75?'나쁨':'매우나쁨';
-  const noiseg=noise<50?'쾌적':noise<65?'보통':noise<75?'시끄러움':'매우시끄러움';
-  const imp=[];
-  if(pm25>35)imp.push('😷 대기질 나쁨 → 차단 녹지대·방진식재 필요');
-  if(noise>65)imp.push('🔊 소음 높음 → 방음식재(차폐림)·방음벽 검토');
-  if(pm25<20&&noise<55)imp.push('✅ 쾌적한 환경 → 야외활동 공간 확대 유리');
-  return{pm25,pm10:pm25+rndInt(rng,10,25),noise,pm25g,noiseg,implications:imp,source:'시뮬레이션 (연동 예정: 에어코리아)',reliability:'simulated'};
-}
-
-function getWater(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,7);
-  // 한강 수계 전체: 서울 도심(126.82~127.20) + 상류 양평·양수리·팔당(127.20~127.55) + 하류 김포(126.60~126.82)
-const nearHan=(lat>37.35&&lat<37.70&&lng>126.60&&lng<127.60&&(
-  (lat>37.49&&lat<37.56&&lng>126.82&&lng<127.20)|| // 서울 본류
-  (lat>37.45&&lat<37.60&&lng>127.20&&lng<127.55)|| // 양수리·팔당·양평 상류
-  (lat>37.50&&lat<37.65&&lng>126.60&&lng<126.82)   // 김포·행주 하류
-));
-
-  let floodRisk,wqGrade,impRatio,annualPrecip,landslideRisk;
-  if(nearHan){
-    floodRisk=pick(rng,['높음','중간','낮음','낮음']);
-    wqGrade=rndInt(rng,2,4);
-    impRatio=rndInt(rng,35,65);
-    annualPrecip=rndInt(rng,1100,1400);
-    landslideRisk=pick(rng,['낮음','낮음','중간']);
-  }else{
-    floodRisk=pick(rng,['낮음','중간','중간','낮음']);
-    wqGrade=rndInt(rng,2,5);
-    impRatio=rndInt(rng,45,80);
-    annualPrecip=rndInt(rng,1200,1500);
-    landslideRisk=pick(rng,['낮음','중간','높음']);
-  }
-
-  const floodRiskIdx={높음:3,중간:1.5,낮음:0}[floodRisk];
-  const score=Math.max(0,Math.min(100, 100 - floodRiskIdx*0.4 - (wqGrade-1)*10 - (impRatio>70?15:0)));
-
-  const imp=[];
-  if(floodRisk==='높음')imp.push('🌊 홍수 위험도 높음 → 투수포장·빗물정원 설치');
-  if(wqGrade>=4)imp.push(`💧 수질 ${wqGrade}등급 → 오염원 관리 및 정화습지 검토`);
-  if(impRatio>70)imp.push(`불투수율 ${impRatio}% — 투수성 재료 우선 사용`);
-  if(landslideRisk==='높음')imp.push('⛰️ 산사태 위험 — 절토부 안정화 및 배수 설계');
-
-  return{
-    floodRisk,wqGrade,impRatio,annualPrecip,landslideRisk,score:Math.round(score),
-    implications:imp,
-    source:'시뮬레이션 (연동 예정: 물환경정보시스템·국토부 홍수위험지도)',
-    reliability:'simulated'
-  };
-}
-
-function getLandscape(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,8);
-
-  const natural=rndInt(rng,10,40);
-  const water=rndInt(rng,0,20);
-  const artificialGreen=rndInt(rng,5,25);
-  const permeable=rndInt(rng,5,25);
-  const impervious=100-natural-water-artificialGreen-permeable;
-
-  const bar=((natural*1.0 + water*1.0 + artificialGreen*0.7 + permeable*0.3 + impervious*0.0)/100).toFixed(2); // 투수포장 가중치 0.3
-
-  const btGrade=rndInt(rng,2,4);
-  const landType=pick(rng,['수변경관','산림경관','도시경관','역사문화경관']);
-  const viewQuality=rndInt(rng,40,90);
-
-  const score=Math.max(0,Math.min(100, viewQuality + (bar>=0.5?15:bar>=0.3?5:-10) + (btGrade<=2?10:-5)));
-
-  const imp=[];
-  if(bar<0.3)imp.push('🏜️ BAR 저조 — 녹지 확충 및 경관 개선 필요');
-  if(bar>=0.5)imp.push('🌳 생태면적률 양호 — 생태 네트워크 유지');
-  if(btGrade<=2)imp.push('⭐ 생태등급 우수 — 보전 우선');
-  if(viewQuality>70)imp.push('🎨 경관 가치 높음 — 시각 연계성 강화');
-
-  return{
-    bar:parseFloat(bar),natural,water,artificialGreen,permeable,impervious,
-    btGrade,landType,viewQuality,score:Math.round(score),
-    implications:imp,
-    source:'시뮬레이션 (연동 예정: 국립생태원 생태지도·토지피복지도)',
-    reliability:'simulated'
-  };
-}
-
-function getUrban(c){
-  const {lat,lng}=c; const rng=seededRng(lat,lng,3);
-  const bizNodes=[[37.57,126.977],[37.505,127.025],[37.522,127.048]];
-  const minBiz=Math.min(...bizNodes.map(b=>dist(lat,lng,b[0],b[1])));
-  let zone,fsr,bcr;
-  if(minBiz<1500){zone=pick(rng,['중심상업지역','일반상업지역']);fsr=rndInt(rng,700,1500);bcr=60;}
-  else if(minBiz<3500){zone=pick(rng,['준주거지역','근린상업지역','제2종일반주거지역']);fsr=rndInt(rng,250,700);bcr=60;}
-  else{zone=pick(rng,['제1종일반주거지역','제2종일반주거지역','제1종전용주거지역']);fsr=rndInt(rng,100,250);bcr=50;}
-  const heritage=rng()<0.08, greenPlan=rng()<0.35, greenbelt=dist(lat,lng,37.658,126.982)<1000;
-  const restr=[];
-  if(heritage)restr.push('문화재 보호구역'); if(greenbelt)restr.push('개발제한구역(그린벨트)');
-  if(rng()<0.12)restr.push('최고고도지구'); if(rng()<0.10)restr.push('경관지구');
-  const imp=[];
-  if(['중심상업지역','일반상업지역'].includes(zone))imp.push('🏙️ 상업지역 → 도시 활성화형 공원·광장 유리');
-  if(greenPlan)imp.push('🌳 도시 공원 계획 연계 → 공공지원 가능성 높음');
-  if(greenbelt)imp.push('🚫 그린벨트 → 개발 제한, 보전 녹지 유지 필수');
-  if(heritage)imp.push('🏛️ 문화재 인근 → 역사경관 고려 필요');
-  return{zone,fsr,bcr,heritage,greenPlan,greenbelt,restr,implications:imp,source:'시뮬레이션 (연동 예정: 국토부 토지이음)',reliability:'simulated'};
-}
-
 function getTraffic(c){
   const {lat,lng}=c; const rng=seededRng(lat,lng,4);
   // OSM 없는 경우 시뮬레이션 (역 좌표 DB 제거됨)
@@ -3425,17 +3186,20 @@ function buildRegulation(urb, eco, water, soil, lsc) {
   // ② 금지행위
   const prohibited = [];
   if (urb && urb.greenbelt) prohibited.push('개발행위 원칙 금지 (개발제한구역법 제12조)');
-  if (eco.grade === 1)      prohibited.push('생태자연도 1등급 — 개발 불가 원칙 (자연환경보전법 제34조)');
+  if (eco.grade === 1 && eco.reliability !== 'simulated') prohibited.push('생태자연도 1등급 — 개발 불가 원칙 (자연환경보전법 제34조)');
   if (urb && urb.heritage)  prohibited.push('문화재 현상변경 금지 (문화재보호법 제35조)');
   if (!prohibited.length)   prohibited.push('현 용도지역 범위 내 일반 금지행위 없음');
 
   // ③ 조건부 허용
   const conditional = [];
-  if (eco.grade === 2)                    conditional.push('생태자연도 2등급 — 환경영향평가 후 조건부 허가');
+  if (eco.grade === 2 && eco.reliability !== 'simulated') conditional.push('생태자연도 2등급 — 환경영향평가 후 조건부 허가');
   if (water.landslideRisk === '높음')     conditional.push('산사태위험구역 — 급경사지 재해예방법 허가 필요');
   if (zone.includes('자연녹지'))          conditional.push('자연녹지지역 — 건축허가 시 조경계획 필수 제출');
   if ((lsc && lsc.impervious || 0) > 60)  conditional.push('불투수율 60% 초과 — 투수성 포장 계획 제출 권장');
   if (!conditional.length)               conditional.push('특별한 조건부 허용 사항 없음');
+
+  // 멸종위기종 — 실측 데이터만 (simulated:true 제외) — reviewNeeded·legalItems 공통 사용
+  const realSpecies = (eco.species||[]).filter(s=>!s.simulated);
 
   // ④ 검토 필요
   const reviewNeeded = [
@@ -3444,7 +3208,7 @@ function buildRegulation(urb, eco, water, soil, lsc) {
     '조경수목 규격 — 「건축물의 조경기준」 별표2 확인 필요',
   ];
   if (water.floodRisk !== '낮음') reviewNeeded.push('홍수위험지도 확인 — 침수방지시설 계획 검토');
-  if (eco.species && eco.species.some(s=>['critical','high'].includes(s.risk))) reviewNeeded.push('멸종위기종 서식 — 자연환경보전법 제49조 저촉 검토');
+  if (realSpecies.length > 0) reviewNeeded.push('멸종위기종 서식 — 자연환경보전법 제49조 저촉 검토');
 
   // 확인된 법적 항목 (실제 API 데이터만 표시)
   const legalItems = [];
@@ -3454,8 +3218,7 @@ function buildRegulation(urb, eco, water, soil, lsc) {
     const ecoLaw = eco.grade<=2?'자연환경보전법 제34조':'—';
     legalItems.push({ label:'생태자연도', value:ecoLabel, law:ecoLaw, status:eco.grade<=2?'warn':'ok', source:'국립생태원 WMS' });
   }
-  // 멸종위기종 — 실측 데이터만 (simulated:true 제외)
-  const realSpecies = (eco.species||[]).filter(s=>!s.simulated);
+  // 멸종위기종 — 실측 데이터만 (realSpecies: 위에서 정의)
   if (realSpecies.length > 0) {
     const names = realSpecies.slice(0,3).map(s=>`${s.icon}${s.name}`).join(', ');
     legalItems.push({ label:'멸종위기종', value:names, law:'자연환경보전법 제49조', status:'warn', source:'국립생물자원관' });
@@ -3751,10 +3514,261 @@ function derivePlantHabitat(d){
   };
 }
 
+// ═══════════════════════════════════════════════════════════
+// 🌿 BdS Staudenmischungen 정적 DB (staudenmischungen.de)
+// licht: sonnig/absonnig/halbschattig/schattig
+// feucht: trocken/frisch/feucht/nass
+// naehr: gering/normal/hoch
+// ═══════════════════════════════════════════════════════════
+const STAUDEN_DB=[
+  // ── SONNIG + TROCKEN ──
+  {name:'Bernburger Blütensteppe',slug:'bernburger-bluetensteppe',
+   desc:'건조·양지형 스텝 믹스. 은빛 초본+라벤더·백리향의 강인한 조합.',
+   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
+   anw:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen','Hausgärten'],heim:false,winter:false},
+  {name:'Bernburger Blütensteppe heimisch',slug:'bernburger-bluetensteppe-heimisch',
+   desc:'독일 자생종 위주의 건조 스텝 믹스. 생태적 가치 높고 곤충 식이식물 다수.',
+   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
+   anw:['Verkehrskreisel','Parkanlagen','Randstreifen/Böschungen'],heim:true,winter:false},
+  {name:'Silbersommer',slug:'silbersommer',
+   desc:'은빛 잎·노랑·보라의 건조지 여름 믹스. 실버-그린 테마.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen'],heim:false,winter:false},
+  {name:'Indian Sunset',slug:'indian-sunset',
+   desc:'노랑·주황·붉은 따뜻한 색조의 건조지 믹스. 강렬한 석양빛 색감.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Verkehrskreisel','Hausgärten','Parkanlagen'],heim:false,winter:false},
+  {name:'Wintersilber',slug:'wintersilber',
+   desc:'겨울 은빛 질감의 초지 믹스. 동절기 관상가치 우수.',
+   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
+   anw:['Verkehrskreisel','Parkanlagen'],heim:false,winter:true},
+  {name:'Wintergold',slug:'wintergold',
+   desc:'금빛 동절기 관상 믹스. 황색 초본·씨앗 이삭의 구조미.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Parkanlagen','Gewerbliches Grün'],heim:false,winter:true},
+  // ── SONNIG + TROCKEN-FRISCH (Steppen-Heide) ──
+  {name:'Filigran',slug:'filigran',
+   desc:'세밀한 줄기·잎 텍스처. 가볍고 투명감 있는 건조~보통 지형 믹스.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Deep Purple',slug:'deep-purple',
+   desc:'보라·자주 톤 중심의 스텝-히스 식재 믹스. 귀족적인 강렬함.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Purple Silver Summer',slug:'purple-silver-summer',
+   desc:'보라와 실버가 어우러진 여름 건조지 믹스.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
+   anw:['Verkehrskreisel','Parkanlagen'],heim:false,winter:false},
+  {name:'Bernburger Blütenflamme',slug:'bernburger-bluetenflamme',
+   desc:'주황·노랑·붉은 불꽃 색조의 역동적인 건조~보통 지형 믹스.',
+   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Verkehrskreisel'],heim:false,winter:false},
+  {name:'Indianersommer',slug:'indianersommer',
+   desc:'늦여름~가을 황금빛 프레리 믹스. 국화·억새류 중심.',
+   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
+  // ── SONNIG + FRISCH (Freifläche Wildstaudencharakter) ──
+  {name:'Bernburger Blütenwandel',slug:'bernburger-bluetenwandel',
+   desc:'계절별 변화가 풍부한 양지 초지 믹스. 봄~가을 지속적 개화.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Öffentliche Grünflächen','Gewerbliches Grün','Hausgärten'],heim:false,winter:false},
+  {name:'Bernburger Blütenwandel heimisch',slug:'bernburger-bluetenwandel-heimisch',
+   desc:'자생종 위주 계절 변화형 양지 초지 믹스. 높은 생태적 가치.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],heim:true,winter:false},
+  {name:'Präriesommer',slug:'praeriesommer',
+   desc:'북미 프레리 스타일 여름 믹스. 키 큰 초본과 원추형 꽃 중심.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
+  {name:'Präriemorgen',slug:'praeriemorgen',
+   desc:'프레리 아침을 연상시키는 청아한 색조의 양지 초지 믹스.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
+  {name:'Blütentraum',slug:'bluetentraum',
+   desc:'핑크·라일락·흰색의 몽환적인 파스텔 꽃밭 믹스.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
+  {name:'Blütenzauber',slug:'bluetenzauber',
+   desc:'다채로운 색상의 양지 초지 믹스. 동화적이고 화사한 느낌.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Big Yellow',slug:'big-yellow',
+   desc:'노랑·황금빛 메인 테마의 양지 초지 믹스. 시각적 임팩트 강함.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Golden Wings',slug:'golden-wings',
+   desc:'금빛 날개처럼 빛나는 황금색 계열 믹스. 루드베키아·해바라기류.',
+   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'normal',
+   anw:['Parkanlagen','Verkehrskreisel','Öffentliche Grünflächen'],heim:false,winter:false},
+  {name:'Pink Paradise',slug:'pink-paradise',
+   desc:'핑크·로즈·라일락 낙원 느낌의 양지 믹스.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
+  {name:'Bernburger Blütenwoge',slug:'bernburger-bluetenwoge',
+   desc:'파도치듯 움직이는 키 큰 초본 중심의 역동적 초지 믹스.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],heim:false,winter:false},
+  {name:'Bernburger Blütenwucht',slug:'bernburger-bluetenwucht',
+   desc:'강인한 구조식물 위주의 건장하고 힘있는 양지 초지 믹스.',
+   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'gering',
+   anw:['Randstreifen/Böschungen','Parkanlagen','Öffentliche Grünflächen'],heim:false,winter:false},
+  {name:'Bernburger Blütenserenade',slug:'bernburger-bluetenserenade',
+   desc:'서정적 리듬의 유려한 곡선형 양지 초지 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
+  // ── SONNIG/HALBSCHATTIG + FRISCH (Beet/Saum) ──
+  {name:'Bernburger Blütensaum',slug:'bernburger-bluetensaum',
+   desc:'경계부·가장자리 식재에 최적화된 반음지~양지 믹스. 도시 경계 녹화에 적합.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Randstreifen/Böschungen','Parkanlagen','Gewerbliches Grün','Flächen im ruhenden Verkehr'],heim:false,winter:false},
+  {name:'Bernburger Blütensaum heimisch',slug:'bernburger-bluetensaum-heimisch',
+   desc:'자생종 위주 경계부 믹스. 곤충·나비 유인 효과 탁월.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Randstreifen/Böschungen','Parkanlagen','Öffentliche Grünflächen'],heim:true,winter:false},
+  {name:'Farbensaum',slug:'farbensaum',
+   desc:'다채로운 색상의 경계부 믹스. 계절별 색 변화가 뚜렷.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Randstreifen/Böschungen','Parkanlagen','Hausgärten'],heim:false,winter:false},
+  {name:'Farbenspiel',slug:'farbenspiel',
+   desc:'색상 유희를 주제로 한 다색 조합 양지~반음지 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Candy Colour',slug:'candy-colour',
+   desc:'캔디처럼 달콤한 파스텔 다색 화단 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Licht & leicht',slug:'licht-leicht',
+   desc:'가볍고 투명감 있는 역광 효과 중심의 반음지~양지 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Morning Light',slug:'morning-light',
+   desc:'아침 빛을 테마로 한 밝고 청아한 느낌의 양지~반음지 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
+  {name:'Spotlights',slug:'spotlights',
+   desc:'조명처럼 빛나는 포인트 식물 중심의 강조형 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Gewerbliches Grün','Hausgärten'],heim:false,winter:false},
+  {name:'Natürlich & robust',slug:'natuerlich-robust',
+   desc:'자연스럽고 강인한 다목적 양지~반음지 믹스. 관리 용이.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'gering',
+   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Blütenmosaik',slug:'bluetenmosaik',
+   desc:'모자이크처럼 다양한 꽃색이 어우러지는 혼합 초지 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
+  // ── SONNIG, WINTER INTEREST ──
+  {name:'Bernburger Blütenwinter',slug:'bernburger-bluetenwinter',
+   desc:'동절기 구조미가 탁월한 사계절 초지 믹스. 씨앗 이삭·조형 줄기.',
+   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:true},
+  {name:'Winterglanz',slug:'winterglanz',
+   desc:'겨울 빛 속에 반짝이는 구조미 중심의 4계절 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Gewerbliches Grün'],heim:false,winter:true},
+  {name:'Winterharmonie',slug:'winterharmonie',
+   desc:'겨울 조화를 주제로 한 절제된 미의 동절기 믹스.',
+   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten'],heim:false,winter:true},
+  // ── HALBSCHATTIG + FRISCH (Gehölz-Rand) ──
+  {name:'Schattengeflüster',slug:'schattengefluester',
+   desc:'숲 가장자리형 반음지 믹스. 흰·보라·녹색 절제된 배색. 에피메디움·디기탈리스·폴리고나툼 조합.',
+   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Randstreifen/Böschungen','Mittelstreifen/Verkehrsteiler','Hausgärten','Gewerbliches Grün','Flächen im ruhenden Verkehr'],heim:false,winter:false},
+  {name:'Bernburger Blütenchill',slug:'bernburger-bluetenchill',
+   desc:'서늘하고 여유로운 파스텔 색조의 반음지 초지 믹스.',
+   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
+  {name:'Bernburger Blütenschleier',slug:'bernburger-bluetenschleier',
+   desc:'베일처럼 섬세하고 투명한 질감의 반음지 믹스.',
+   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
+  {name:'Bernburger Blütenschatten',slug:'bernburger-bluetenschatten',
+   desc:'그늘진 환경 최적화 믹스. 고사리·호스타류·은방울꽃 중심.',
+   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Flächen im ruhenden Verkehr'],heim:false,winter:false},
+  {name:'Bernburger Blütenwinter schattig',slug:'bernburger-bluetenwinter-schattig',
+   desc:'그늘진 환경에서도 동절기 관상가치 있는 반음지 믹스.',
+   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten'],heim:false,winter:true},
+  // ── SCHATTIG + FRISCH (Gehölz) ──
+  {name:'Schattenglanz',slug:'schattenglanz',
+   desc:'깊은 그늘에서 빛나는 반짝이는 잎과 섬세한 꽃의 그늘 믹스.',
+   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten','Flächen im ruhenden Verkehr'],heim:false,winter:false},
+  {name:'Schattenzauber',slug:'schattenzauber',
+   desc:'그늘 속 신비로운 느낌의 음지 식재 믹스.',
+   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
+   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
+];
+
+// ═══════════════════════════════════════════════════════════
+// 🌿 식재 믹스 추천 엔진 (입지분석 결과 → BdS 믹스 매칭)
+// ═══════════════════════════════════════════════════════════
+function buildStaudenRecommendations(ph_d, urb, st, eco) {
+  const LICHT_ORDER = ['schattig','halbschattig','absonnig','sonnig'];
+  const FEUCHTE_ORDER = ['nass','feucht','frisch','trocken'];
+  const LICHT_MAP = {
+    '양지':['sonnig'],'반음지~양지':['sonnig','absonnig'],
+    '반음지':['absonnig','halbschattig'],'음지~반음지':['halbschattig','schattig']
+  };
+  const FEUCHTE_MAP = {
+    '건조':['trocken'],'건조~보통':['trocken','frisch'],'보통':['frisch'],
+    '보통~습윤':['frisch','feucht'],'습윤':['feucht'],'과습':['feucht','nass']
+  };
+  const NAEHR_ORDER=['gering','normal','hoch'];
+  const siteLicht=LICHT_MAP[ph_d.sun.label]||['sonnig','absonnig'];
+  const siteFeucht=FEUCHTE_MAP[ph_d.moist.label]||['frisch'];
+  const siteNaehr=ph_d.nut.label==='척박'?'gering':ph_d.nut.label==='비옥'?'hoch':'normal';
+  const ANW_PREF={
+    WET:['Randstreifen/Böschungen','Parkanlagen'],
+    DRY:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen'],
+    URB:['Gewerbliches Grün','Parkanlagen','Flächen im ruhenden Verkehr','Verkehrskreisel'],
+    ECO:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],
+    HAZ:['Randstreifen/Böschungen'],
+    RIP:['Randstreifen/Böschungen','Parkanlagen'],
+  };
+  const siteAnwBase=ANW_PREF[st&&st.primary&&st.primary.code]||['Parkanlagen'];
+  const siteAnw=[...siteAnwBase];
+  if(urb&&urb.zone){if(urb.zone.includes('상업'))siteAnw.unshift('Gewerbliches Grün');if(urb.zone.includes('주거'))siteAnw.unshift('Hausgärten');}
+
+  const scored=STAUDEN_DB.map(mix=>{
+    let score=0;
+    // Light match (0-40 pts)
+    const lichtOverlap=mix.licht.filter(l=>siteLicht.includes(l)).length;
+    if(lichtOverlap>0){score+=40;}else{
+      const si1=Math.min(...siteLicht.map(l=>LICHT_ORDER.indexOf(l)));
+      const si2=Math.max(...siteLicht.map(l=>LICHT_ORDER.indexOf(l)));
+      const mi1=Math.min(...mix.licht.map(l=>LICHT_ORDER.indexOf(l)));
+      const mi2=Math.max(...mix.licht.map(l=>LICHT_ORDER.indexOf(l)));
+      if(Math.abs(si2-mi1)<=1||Math.abs(mi2-si1)<=1){score+=15;}else{return{mix,score:-1};}
+    }
+    // Moisture match (0-30 pts)
+    const fOverlap=mix.feucht.filter(f=>siteFeucht.includes(f)).length;
+    if(fOverlap>0){score+=30;}else{
+      const si1=Math.min(...siteFeucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
+      const si2=Math.max(...siteFeucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
+      const mi1=Math.min(...mix.feucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
+      const mi2=Math.max(...mix.feucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
+      if(Math.abs(si2-mi1)<=1||Math.abs(mi2-si1)<=1){score+=10;}
+    }
+    // Nutrient match (0-15 pts)
+    const sni=NAEHR_ORDER.indexOf(siteNaehr),mni=NAEHR_ORDER.indexOf(mix.naehr);
+    score+=sni===mni?15:Math.abs(sni-mni)===1?7:0;
+    // Application bonus (0-15 pts)
+    if(mix.anw.some(a=>siteAnw.includes(a)))score+=15;
+    // Heimisch eco bonus
+    if(mix.heim&&eco&&eco.grade<=2)score+=5;
+    return{mix,score};
+  });
+  return scored.filter(r=>r.score>50).sort((a,b)=>b.score-a.score).slice(0,4);
+}
+
 function renderResults(d){
   const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,nihHardiness:nih,osm:osmD}=d;
   const sc=an.scores;
   const ph_d = derivePlantHabitat(d); // 식재 서식 조건
+  const staudenRec = buildStaudenRecommendations(ph_d, urb, st, eco);
 
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
@@ -3932,6 +3946,30 @@ function renderResults(d){
       </div>
       <div class="source-row" style="margin-top:10px;">${ph_d.reliability}</div>
     </div>
+
+    ${staudenRec.length?`
+    <div class="card">
+      <div class="card-title">🌿 BdS 식재 믹스 추천 <span style="font-size:10px;color:#546e7a;font-weight:400">— staudenmischungen.de 서비스</span></div>
+      ${staudenRec.map(({mix,score})=>`
+        <div style="background:#0d1b26;border-radius:8px;padding:10px;margin-bottom:8px;border-left:3px solid ${score>=75?'#4fc3f7':score>=60?'#81c784':'#ffb74d'}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
+            <a href="https://www.staudenmischungen.de/mischungsdetail/${mix.slug}.html" target="_blank" style="color:#4fc3f7;font-size:13px;font-weight:700;text-decoration:none;">${mix.name} ↗</a>
+            <span style="font-size:10px;background:#1a2a3a;padding:2px 7px;border-radius:4px;color:${score>=75?'#4fc3f7':score>=60?'#81c784':'#ffb74d'}">적합도 ${score}점</span>
+          </div>
+          <div style="font-size:11px;color:#b0bec5;margin-bottom:6px;line-height:1.5">${mix.desc}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <span class="badge b-blue">${mix.licht.join('·')}</span>
+            <span class="badge b-grey">${mix.feucht.join('·')}</span>
+            <span class="badge b-grey">영양: ${mix.naehr==='gering'?'척박':mix.naehr==='normal'?'보통':'비옥'}</span>
+            ${mix.heim?'<span class="badge b-green">자생종</span>':''}
+            ${mix.winter?'<span class="badge b-blue">동절기관상</span>':''}
+          </div>
+        </div>`).join('')}
+      <div style="font-size:10px;color:#455a64;margin-top:4px;">
+        📊 일조(${ph_d.sun.label}) · 수분(${ph_d.moist.label}) · 영양(${ph_d.nut.label}) 기반 매칭
+        &nbsp;·&nbsp; <a href="https://www.staudenmischungen.de/alle-staudenmischungen-im-ueberblick.html" target="_blank" style="color:#546e7a">전체 42개 믹스 보기 →</a>
+      </div>
+    </div>` : ''}
 
     <div class="card" id="tab-card">
       <div class="tab-bar">
