@@ -537,13 +537,13 @@ function resetPass(){
 // ════════════════════════════════════════════
 // 지도 초기화
 // ════════════════════════════════════════════
-const map = L.map('map').setView([36.5,127.5],7);
+const map = L.map('map').setView([37.5,127.0],12);
 const BM = {
-  osm:    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20}),
+  osm:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',subdomains:'abc',maxZoom:20}),
   vworld: L.tileLayer(`${WORKER_URL}/vworld-base/{z}/{y}/{x}`,{attribution:'© 국토지리정보원 VWorld',maxZoom:19,tileSize:256}),
   sat:    L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
   hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
-  topo:   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OSM © CARTO',subdomains:'abcd',maxZoom:20})
+  topo:   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{attribution:'© OpenTopoMap',subdomains:'abc',maxZoom:17})
 };
 // VWorld 한글 지명 오버레이 (위성/OSM 위에 표시)
 let vworldLabelLayer=null;
