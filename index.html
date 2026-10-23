@@ -3695,34 +3695,6 @@ function renderResults(d){
 
     </div>
 
-    <!-- ⚖️ 규제 분석 블록 -->
-    <div class="reg-card">
-      <div class="reg-title">⚖️ 규제 분석 <span style="font-size:10px;color:#78909c;font-weight:400">— 설계 전 법적 검토</span></div>
-
-      <!-- 용도·건폐·용적·조경 메타 — 그린벨트/1등급 시 건폐율/용적률 숨김 -->
-      <div class="reg-meta-bar">
-        <span class="reg-meta-chip">📌 ${reg.zone}</span>
-        ${(urb&&urb.greenbelt) ? `<span class="reg-meta-chip" style="background:#fff3e0;color:#e65100;border-color:#ffb74d">⚠️ 그린벨트 — 건폐율/용적률 적용 불가</span>`
-        : eco.grade === 1 ? `<span class="reg-meta-chip" style="background:#ffebee;color:#c62828;border-color:#ef9a9a">⚠️ 1등급 — 수치 적용 불가</span>`
-        : (!reg.bcr||!reg.fsr||reg.zone==='미확인'||reg.zone==='확인필요') ? `<span class="reg-meta-chip" style="background:#263238;color:#90a4ae;border-color:#546e7a">⚠️ 용도지역 미확인 — 수치 미제공</span>`
-        : `<span class="reg-meta-chip">건폐율 max ${reg.bcr}%</span>
-        <span class="reg-meta-chip">용적률 max ${reg.fsr}%</span>
-        <span class="reg-meta-chip">조경: ${reg.greenArea.split(' ')[0]} ${reg.greenArea.split(' ')[1]||''}</span>`}
-      </div>
-
-      <!-- 법적 항목 테이블 -->
-      ${reg.legalItems && reg.legalItems.length ? `
-      <div style="margin-top:10px">
-        ${reg.legalItems.map(item=>`
-        <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1e3a4f;font-size:11px">
-          <span style="color:#546e7a;min-width:70px;flex-shrink:0">${item.label}</span>
-          <span style="color:${item.status==='warn'?'#ffb74d':item.status==='caution'?'#fff176':item.status==='none'?'#546e7a':'#a5d6a7'};flex:1">${item.value}</span>
-          ${item.law&&item.law!=='—'?`<span style="font-size:9px;color:#455a64;background:#1e3a4f;padding:2px 6px;border-radius:3px;flex-shrink:0">${item.law}</span>`:''}
-        </div>`).join('')}
-      </div>` : ''}
-
-    </div>
-
     <!-- 🌡️ 환경 기준 적합성 검토 카드 — 실측 지표 있을 때만 표시 -->
     ${pf.indicators.filter(i=>['air','hydro','heat'].includes(i.key)&&i.status!=='unknown').length > 0 ? `<div class="perf-card">
       <div class="perf-card-title">🌡️ 환경 기준 적합성 검토 <span style="font-size:10px;color:#546e7a;font-weight:400">— 공인 법령·기관 기준 정성 판단</span></div>
@@ -4098,7 +4070,7 @@ function renderResults(d){
     </div>
 
     <button class="pdf-btn" onclick="downloadPDF()">📄 입지 분석 보고서 PDF 다운로드</button>
-    <div style="margin-top:10px;padding:8px 10px;background:#0d1b26;border-radius:8px;font-size:12px;color:#b0bec5;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+    <div id="lightBox" style="margin-top:10px;padding:8px 10px;background:#0d1b26;border-radius:8px;font-size:12px;color:#b0bec5;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
       <span>☀️ 광량 (현장 판단)</span>
       <select id="lightPick" style="background:#132a3a;color:#e0f2f1;border:1px solid #1e3a4f;border-radius:6px;padding:3px 6px">
         <option value="">자동 추정${dc&&dc.light?` (${dc.light})`:''}</option><option>양지</option><option>반양지</option><option>반음지</option><option>음지</option>
@@ -4106,7 +4078,7 @@ function renderResults(d){
       <a href="https://app.shadowmap.org/?lat=${d.coords.lat.toFixed(5)}&lng=${d.coords.lng.toFixed(5)}&zoom=17" target="_blank" rel="noopener" style="color:#4fc3f7">Shadowmap에서 그림자 보기 ↗</a>
       <span style="font-size:10px;color:#78909c;width:100%">건물·나무 그림자를 보고 고르면 그 값이 식재툴로 넘어가요. 고르지 않으면 지역 일사량으로 추정한 값이 가요.</span>
     </div>
-    <button class="pdf-btn" onclick="sendToPlants()" style="margin-top:8px">🌿 식재툴로 보내기 (대상지 조건)</button>
+    <button class="pdf-btn" id="sendPlantsBtn" onclick="sendToPlants()" style="margin-top:8px;margin-bottom:12px">🌿 식재툴로 보내기 (대상지 조건)</button>
     <div style="height:16px"></div>`;
 
   const rc=document.getElementById('resultContent');
@@ -4117,9 +4089,13 @@ function renderResults(d){
   // 입지 타입·규제·환경 기준·식재 서식 카드도 같은 2열 묶음 맨 앞으로 (한 페이지에 12개 모두)
   const _grid=_tc&&_tc.querySelector('.tab-grid');
   if(_grid){
-    const _first=[...rc.children].filter(el=>el.matches('.stype-card,.reg-card,.perf-card,#habitat-card'));
+    const _first=[...rc.children].filter(el=>el.matches('.stype-card,.reg-card,.perf-card'));
     _first.reverse().forEach(el=>_grid.prepend(el));
   }
+  // 식재 서식 조건 + 광량(현장 판단) + 식재툴로 보내기 → 결과 맨 위
+  const _top=document.createElement('div'); _top.id='plantTop';
+  ['habitat-card','lightBox','sendPlantsBtn'].forEach(id=>{const el=document.getElementById(id); if(el) _top.appendChild(el);});
+  rc.prepend(_top);
   requestAnimationFrame(()=>{
     drawRadar(sc);
     document.querySelectorAll('.score-bar[data-w]').forEach(b=>{setTimeout(()=>{b.style.width=b.dataset.w+'%';},50);});
@@ -4503,22 +4479,6 @@ ${pf.indicators.filter(ind=>['air','hydro','heat'].includes(ind.key)).map((ind,i
           <li>국립생태원 생태지도: 생태자연도·비오톱 정보 (ecomap.nie.re.kr)</li>
           <li>국토부 홍수위험지도: 홍수 위험도 및 산사태 정보 (floodhazard.mlit.go.kr)</li>
         </ul>
-      </div>
-
-      <!-- 규제 분석 -->
-      <div style="margin-bottom:20px;border:2px solid #7b1fa2;border-radius:8px;overflow:hidden">
-        <div style="background:#7b1fa2;color:#fff;padding:10px 16px;font-size:14px;font-weight:700">⚖️ 규제 분석</div>
-        <div style="padding:12px 16px">
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-            <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px;font-weight:700">${reg.zone}</span>
-            ${(urb&&urb.greenbelt)
-              ? `<span style="background:#fff3e0;border:1px solid #ffb74d;padding:3px 10px;border-radius:4px;font-size:10px;color:#e65100">⚠️ 그린벨트 — 건폐율/용적률 적용 불가</span>`
-              : eco.grade===1
-              ? `<span style="background:#ffebee;border:1px solid #ef9a9a;padding:3px 10px;border-radius:4px;font-size:10px;color:#c62828">⚠️ 생태1등급 — 건폐율/용적률 적용 불가</span>`
-              : `<span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">건폐율 max ${reg.bcr}%</span>
-            <span style="background:#f3e5f5;border:1px solid #ce93d8;padding:3px 10px;border-radius:4px;font-size:10px">용적률 max ${reg.fsr}%</span>`}
-          </div>
-        </div>
       </div>
 
       <!-- 공간전략 -->
