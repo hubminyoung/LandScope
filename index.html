@@ -399,7 +399,7 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       <input class="address-input" id="address" type="text"
              placeholder="주소 입력 (예: 부산 해운대, 제주 함덕해변, 강릉 경포대)"
              value=""
-             oninput="window._savedMapCoords=null"
+             oninput="clearConfirm()"
              onkeydown="if(event.key==='Enter')runAnalysis()">
 
       <div class="controls-row">
@@ -413,7 +413,7 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
       </div>
 
       <button class="btn-primary" id="analyzeBtn" onclick="runAnalysis()">
-        🔍 입지 분석 시작
+        📍 위치 확인
       </button>
     </div>
 
@@ -698,10 +698,10 @@ map.on('mousemove',function(e){
 
 // 클릭 → 좌표 확정 후 분석 실행
 map.on('click',async function(e){
-  if(!pickMode)return;
+  if(!pickMode&&!window._confirmCoords)return;   // 확인 대기 중이면 클릭으로 핀 옮기기
   const {lat,lng}=e.latlng;
   // 클릭 모드 종료
-  togglePickMode();
+  if(pickMode) togglePickMode();
   // 역지오코딩으로 주소 채우기 (실패해도 괜찮음)
   const addrField=document.getElementById('address');
   addrField.value=`위도 ${lat.toFixed(6)}, 경도 ${lng.toFixed(6)}`; // 기본값
@@ -734,9 +734,37 @@ map.on('click',async function(e){
     console.warn('역지오코딩 실패:', err.message);
     // 기본값(위도/경도) 유지
   }
-  // 직접 클릭한 좌표로 분석 (geocode 생략)
-  runAnalysisAt({lat,lng,name:addrField.value});
+  // 바로 분석하지 않고 위치 확인 핀 표시
+  showConfirm({lat,lng,name:addrField.value});
 });
+
+// ── 위치 확인 후 분석 ──────────────────────────────────
+let confirmMarker=null;
+function showConfirm(coords){
+  window._confirmCoords=coords;
+  window._savedMapCoords=coords;
+  const label=(coords.fullName||coords.name||'').replace(/</g,'&lt;')||`위도 ${coords.lat.toFixed(6)}, 경도 ${coords.lng.toFixed(6)}`;
+  const html=`<div style="font-size:12px;line-height:1.5;min-width:180px">
+      <b>📍 이 위치가 맞나요?</b><br>${label}<br>
+      <span style="color:#78909c;font-size:11px">아니면 지도를 다시 클릭해 옮기세요</span><br>
+      <button onclick="startConfirmed()" style="margin-top:6px;width:100%;padding:6px;border:0;border-radius:6px;background:#0288d1;color:#fff;font-weight:600;cursor:pointer">🔍 이 위치로 분석</button>
+    </div>`;
+  if(!confirmMarker) confirmMarker=L.marker([coords.lat,coords.lng]).addTo(map);
+  else confirmMarker.setLatLng([coords.lat,coords.lng]);
+  confirmMarker.bindPopup(html,{closeOnClick:false,autoClose:false}).openPopup();
+  map.setView([coords.lat,coords.lng],Math.max(map.getZoom(),16));
+  const b=document.getElementById('analyzeBtn'); if(b) b.innerHTML='🔍 이 위치로 분석';
+}
+function clearConfirm(){
+  window._confirmCoords=null; window._savedMapCoords=null;
+  if(confirmMarker){ map.removeLayer(confirmMarker); confirmMarker=null; }
+  const b=document.getElementById('analyzeBtn'); if(b) b.innerHTML='📍 위치 확인';
+}
+function startConfirmed(){
+  const c=window._confirmCoords; if(!c) return;
+  clearConfirm();
+  runAnalysisAt(c);
+}
 
 // ════════════════════════════════════════════
 // 유틸리티
@@ -815,15 +843,13 @@ async function runAnalysis(){
   try{
     // ① _savedMapCoords가 있으면 무조건 재사용 — 주소 형식(지번/좌표/역지오코딩 결과) 무관
     //   (사용자가 직접 주소를 수정하면 oninput에서 _savedMapCoords=null 처리됨)
-    let coords;
-    if(window._savedMapCoords){
-      coords=window._savedMapCoords;
-      console.log('✅ 저장된 좌표 재사용 (재지오코딩 생략):', coords.lat.toFixed(6), coords.lng.toFixed(6));
-    } else {
-      coords=await geocode(address);
+    if(window._confirmCoords){            // 위치 확인 끝 → 분석
+      ld.style.display='none'; btn.disabled=false;
+      startConfirmed(); return;
     }
-    window._savedMapCoords=null; // 소비 후 초기화
-    await _doAnalysis(address, coords);
+    const coords=await geocode(address);  // 주소 찾기 → 핀만 표시 (분석은 확인 후)
+    ld.style.display='none'; btn.disabled=false;
+    showConfirm(coords);
   }catch(e){
     ld.style.display='none'; btn.disabled=false;
     alert('위치 검색 오류:\n'+e.message);
@@ -1293,7 +1319,6 @@ async function _doAnalysis(address, coords){
     _analysisRunning=false;
   }
 }
-document.getElementById('address').addEventListener('keydown',e=>{if(e.key==='Enter')runAnalysis();});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 // ════════════════════════════════════════════
