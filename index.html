@@ -4926,7 +4926,9 @@ async function getRealUrban(c){
       console.log('🗺️ VWorld 응답(앞 200자):',txt.slice(0,200));
       return JSON.parse(txt);
     };
-    const [r1,r2,r3,r4]=await Promise.allSettled([
+    const pointBase=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng.toFixed(6)}%20${c.lat.toFixed(6)})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
+    const [r1p,r1,r2,r3,r4]=await Promise.allSettled([
+      fetchVworld(pointBase+'&data=LT_C_UQ111'),   // 대상지 좌표가 속한 용도지역 (정확)
       fetchVworld(base+'&data=LT_C_UQ111'),
       fetchVworld(base+'&data=LT_C_UQ112'),
       fetchVworld(base+'&data=LT_C_UQ113'),
@@ -4944,11 +4946,12 @@ async function getRealUrban(c){
     nedZoneList.filter(z=>z!==nedZone).forEach(zn=>{ if(!restr.includes(zn)) restr.push(zn); });
 
     // ① 용도지역 (NED WFS 실패 시 Data API UQ111로 보완)
-    if((zone==='확인필요'||!zone)&&r1.status==='fulfilled'&&r1.value?.response?.status==='OK'){
-      const f=r1.value.response.result?.featureCollection?.features||[];
+    const r1use=(r1p.status==='fulfilled'&&r1p.value?.response?.status==='OK')?r1p:r1;   // 좌표 조회 우선, 없으면 주변 300m
+    if((zone==='확인필요'||!zone)&&r1use.status==='fulfilled'&&r1use.value?.response?.status==='OK'){
+      const f=r1use.value.response.result?.featureCollection?.features||[];
       if(f.length>0){
         const p=f[0].properties;
-        zone=p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';
+        zone=p.uname||p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';   // VWorld 필드명이 uname으로 바뀜
         console.log('✅ VWorld Data API 용도지역(폴백):',zone);
       }else{
         console.warn('⚠️ VWorld UQ111: features 배열 비어있음');
@@ -4959,7 +4962,7 @@ async function getRealUrban(c){
     if(r2.status==='fulfilled'&&r2.value?.response?.status==='OK'){
       const f=r2.value.response.result.featureCollection.features||[];
       f.forEach(ft=>{
-        const nm=ft.properties.UQ112_UQ112NM||ft.properties.ZONE_NM||'';
+        const nm=ft.properties.uname||ft.properties.UQ112_UQ112NM||ft.properties.ZONE_NM||'';
         if(nm) districtNames.push(nm);
       });
       districtNames.forEach(nm=>{
