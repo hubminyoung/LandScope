@@ -863,6 +863,21 @@ async function _doAnalysis(address, coords){
     const meteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,precipitation,relative_humidity_2m,apparent_temperature&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,sunshine_duration&timezone=Asia%2FSeoul&past_days=7&forecast_days=3`;
     const openaqUrl = `https://api.openaq.org/v3/locations?coordinates=${coords.lat},${coords.lng}&radius=30000&limit=10&parameters_id=2`;
 
+    // ── 속도 개선: 서로 기다릴 필요 없는 자료를 처음에 한꺼번에 요청 (각각 시간 제한, 넘기면 null) ──
+    const T=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>null), new Promise(r=>setTimeout(()=>r(null),ms))]);
+    const P={
+      aq:      T(getRealAirQualityOAQ(coords),10000),
+      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),8000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), T(getSgisPopulation(coords),10000)]),
+      mcee:    T(fetchMceeLC(coords.lat, coords.lng),10000),
+      pnu:     T(fetchPNU(coords.lat, coords.lng),10000),
+      air:     T(getRealAir(coords),10000),
+      soil:    T(getRealSoilRDA(coords, address),12000),
+      contam:  T(getRealSoilContamination(address),10000),
+      species: Promise.allSettled([T(getRealSpeciesEcobank(coords),12000), Promise.resolve(null), T(getGyeonggiProtected(coords, address),10000)]),
+      env:     Promise.allSettled([T(getRealEnvGrade(coords),10000), T(getRealLandcover(coords),10000), T(getRealAgriWeather(coords, address),10000)]),
+      clim:    Promise.allSettled([T(getClimateSummary(coords),15000), T(getNIHHSHardiness(address),10000)]),
+    };
+    P.soilChem = P.pnu.then(pn=>T(getRealSoilChem(pn),10000));
     const [osmRaw, elevData, weatherData] = await Promise.allSettled([
       getOSMData(coords, radius),
       getRealElevation(coords),
@@ -899,7 +914,7 @@ async function _doAnalysis(address, coords){
     // getWeather() 결과는 열섬·바람길 분석 로직에만 활용, UI 표시하지 않음
 
     document.getElementById('loadingStep').textContent=STEPS[2];
-    const aqReal = await getRealAirQualityOAQ(coords);
+    const aqReal = await P.aq;
 
     // ── 데이터 로그: 대기질(OpenAQ) ──
     if(aqReal&&aqReal.reliability==='real'){
@@ -929,13 +944,7 @@ async function _doAnalysis(address, coords){
     document.getElementById('loadingStep').textContent=STEPS[5];
     let urban = buildUrban(coords, osm);
     // 실 API 병렬 조회: 용도지역(VWorld) + 버스정류장 + 홍수위험 + 소음 + 인구
-    const [realUrbanR, realBusR, realFloodR, realNoiseR, sgisPopR] = await Promise.allSettled([
-      getRealUrban(coords),
-      getRealBusStops(coords),
-      getRealFloodRisk(coords),
-      getRealNoise(coords),
-      getSgisPopulation(coords)
-    ]);
+    const [realUrbanR, realBusR, realFloodR, realNoiseR, sgisPopR] = await P.urban;
     const realUrban=realUrbanR.value;
     const realBus=realBusR.value;
     const realFlood=realFloodR.value;
@@ -1000,7 +1009,7 @@ async function _doAnalysis(address, coords){
     const landscape = buildLandscape(coords, osm);
 
     // ── 환경부 토지피복도 실데이터 (Cloudflare Worker 경유) ──
-    const mceeLC = await fetchMceeLC(coords.lat, coords.lng);
+    const mceeLC = await P.mcee;
     if(mceeLC){
       landscape.landCoverReal = mceeLC;
       landscape.lcRealName = mceeLC.lnlc_nm;
@@ -1014,7 +1023,7 @@ async function _doAnalysis(address, coords){
     }
 
     // ── PNU (필지고유번호) 추출 ──
-    const pnu = await fetchPNU(coords.lat, coords.lng);
+    const pnu = await P.pnu;
     if(pnu) console.log('PNU:', pnu);
 
     // ── 데이터 로그: 수환경 ──
@@ -1042,7 +1051,7 @@ async function _doAnalysis(address, coords){
 
     document.getElementById('loadingStep').textContent=STEPS[8];
     let air=buildAir(coords, osm, aqReal);
-    const realAir=await getRealAir(coords);
+    const realAir=await P.air;
     if(realAir){
       // 에어코리아 실측 최우선
       air={...air,pm25:realAir.pm25,pm10:realAir.pm10,pm25g:realAir.pm25g,station:realAir.station,source:realAir.source,reliability:realAir.reliability};
@@ -1068,7 +1077,7 @@ async function _doAnalysis(address, coords){
     // ── 날씨 실황 조회 제거 — 설계 분석에 불필요, KMAHUB 기후통계로 대체 ──
 
     // ── 흙토람 토양 V3 PNU 기반 (키 있을 때) ──
-    const realSoil = await getRealSoilRDA(coords, address);
+    const realSoil = await P.soil;
     if(realSoil){
       // V3: texture(표토토성), drainage(배수등급), depth(유효토심), geography(분포지형) 등
       if(realSoil.texture) soil.soil_type=realSoil.texture;
@@ -1113,11 +1122,7 @@ async function _doAnalysis(address, coords){
     }
 
     // ── 농경지화학성 V2 (pH·유기물·유효인산) + 지하수위 + 토양오염도 병렬 조회 ──
-    const [soilChemRes, gwRes, soilContamRes] = await Promise.allSettled([
-      getRealSoilChem(pnu),
-      Promise.resolve(null), // 지하수: 위치 기반 조회 서비스 폐지로 제외 (2026-10)
-      getRealSoilContamination(address)
-    ]);
+    const [soilChemRes, gwRes, soilContamRes] = await Promise.allSettled([P.soilChem, Promise.resolve(null) /* 지하수: 서비스 폐지로 제외 */, P.contam]);
     const soilChem    = soilChemRes.status==='fulfilled'    ? soilChemRes.value    : null;
     const gwReal      = gwRes.status==='fulfilled'          ? gwRes.value          : null;
     const soilContam  = soilContamRes.status==='fulfilled'  ? soilContamRes.value  : null;
@@ -1154,11 +1159,7 @@ async function _doAnalysis(address, coords){
     }
 
     // ── 서식종: 에코뱅크(1순위) + NIBR(2순위) + 경기도 보호종 병렬 조회 ──
-    const [ecobankSpecies, realSpecies, ggProtected] = await Promise.allSettled([
-      getRealSpeciesEcobank(coords),
-      Promise.resolve(null), // 국립생물자원관 멸종위기종 서비스 폐지로 제외 (2026-10)
-      getGyeonggiProtected(coords, address)
-    ]);
+    const [ecobankSpecies, realSpecies, ggProtected] = await P.species; // 국립생물자원관 멸종위기종: 서비스 폐지로 제외
     const speciesData = ecobankSpecies.value || realSpecies.value || ggProtected.value;
     if(speciesData&&speciesData.species.length>0){
       ecology.species=[...speciesData.species,...ecology.species.filter(s=>
@@ -1209,7 +1210,6 @@ async function _doAnalysis(address, coords){
       }
     }
 
-    await sleep(300);
     const analysis = analyze(ecology,weather,soil,air,urban,traffic,social,water,landscape,preset);
     const performance = buildPerformance(weather,landscape,water,ecology,social,traffic,air,soil,radius);
     const designCond = buildDesignConditions(weather,landscape,water,ecology,social,traffic,air,soil,radius,analysis);
@@ -1226,11 +1226,7 @@ async function _doAnalysis(address, coords){
 
     // ── 4대 필수 항목 + 농업기상 관측지점 병렬 조회 ──
     document.getElementById('loadingStep').textContent='국토환경성·토지피복·겨울철새·농업기상 데이터 조회 중…';
-    const [envGradeRealR, landcoverR, agriWeatherR] = await Promise.allSettled([
-      getRealEnvGrade(coords),
-      getRealLandcover(coords),
-      getRealAgriWeather(coords, address),
-    ]);
+    const [envGradeRealR, landcoverR, agriWeatherR] = await P.env;
     const envGradeReal = envGradeRealR.value||null;
     const landcover    = landcoverR.value||null;
     const agriWeather  = agriWeatherR.value||null;
@@ -1268,10 +1264,7 @@ async function _doAnalysis(address, coords){
     }
 
     // 기후 자동분석 + 농진청 내한성 — 병렬 조회
-    const [csResult,nihResult]=await Promise.allSettled([
-      getClimateSummary(coords),
-      getNIHHSHardiness(address)
-    ]);
+    const [csResult,nihResult]=await P.clim;
     const climateSummary=csResult.status==='fulfilled'?csResult.value:null;
     if(climateSummary?.extMinAvg!=null){
       const z=usdaZoneC(climateSummary.extMinAvg);
@@ -1480,7 +1473,7 @@ async function geocode(address){
 async function getOSMData(c, radius) {
   const {lat, lng} = c;
   const r = Math.min(radius || 500, 2000);
-  const query = `[out:json][timeout:30];
+  const query = `[out:json][timeout:12];
 (
   way["landuse"~"forest|grass|meadow|park|nature_reserve|cemetery|allotments|residential|commercial|retail|industrial|farmland|orchard"](around:${r},${lat},${lng});
   way["leisure"~"park|garden|nature_reserve|recreation_ground|pitch|golf_course"](around:${r},${lat},${lng});
@@ -1504,16 +1497,14 @@ out body;
 out skel qt;`;
   // Overpass 미러 목록 (504·502 일시 오류 시 순차 시도)
   const OVERPASS_MIRRORS=[
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://overpass.openstreetmap.ru/api/interpreter'
+    'https://overpass-api.de/api/interpreter'   // 속도 개선: 한 곳만 한 번 시도 (실패 시 OSM 없이 진행)
   ];
   for(let mi=0;mi<OVERPASS_MIRRORS.length;mi++){
     try{
       const res=await fetchWithRetry(OVERPASS_MIRRORS[mi],{
         method:'POST', body:query, headers:{'Content-Type':'text/plain'},
-        signal:AbortSignal.timeout(35000)
-      },1,1500);
+        signal:AbortSignal.timeout(12000)
+      },0,0);
       if(!res.ok){
         console.warn(`Overpass ${OVERPASS_MIRRORS[mi]} — HTTP ${res.status}`);
         continue;
