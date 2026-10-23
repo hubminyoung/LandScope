@@ -910,6 +910,7 @@ async function _doAnalysis(address, coords){
       contam:  T(getRealSoilContamination(address),10000),
       species: Promise.allSettled([T(getRealSpeciesEcobank(coords),12000), Promise.resolve(null), T(getGyeonggiProtected(coords, address),10000)]),
       env:     Promise.allSettled([T(getRealEnvGrade(coords),10000), T(getRealLandcover(coords),10000), T(getRealAgriWeather(coords, address),10000)]),
+      heat:    T(getHeatZone(coords),13000),
       clim:    Promise.allSettled([T(getClimateSummary(coords),15000), T(getNIHHSHardiness(address),10000)]),
     };
     P.soilChem = P.pnu.then(pn=>T(getRealSoilChem(pn),10000));
@@ -1164,10 +1165,10 @@ async function _doAnalysis(address, coords){
       if(soilChem.ph!=null)  soil.ph=soilChem.ph;
       if(soilChem.om!=null)  soil.om=soilChem.om;
       soil.ap=soilChem.ap;
-      soil.soilChemSource=soilChem.source;
-      dataLog.push({category:'토양화학성 (농진청 V2)',icon:'🧪',api:'농촌진흥청 농경지화학성 통계 V2',
-        url:'https://apis.data.go.kr/1390802/SoilEnviron/SoilExamStat/V2',
-        note:`법정동코드(${soilChem.bjdCd}) 기반 pH·유기물·유효인산 통계`,
+      soil.soilChemSource=soilChem.source; soil.soilChemBasis=soilChem.basis; soil.soilChemN=soilChem.n; soil.soilChemYear=soilChem.year;
+      dataLog.push({category:'토양화학성 (농진청 토양검정)',icon:'🧪',api:'농촌진흥청 토양검정 화학성 상세정보 V2',
+        url:'https://apis.data.go.kr/1390802/SoilEnviron/SoilExam/V2',
+        note:soilChem.basis==='pnu'?`대상 필지 검정값 (${soilChem.year})`:`법정동(${soilChem.bjdCd}) 농경지 검정 ${soilChem.n}건 평균 (${soilChem.year}) — 대상지 값 아님`,
         values:`pH ${soilChem.ph??'—'} / 유기물 ${soilChem.om??'—'}g/kg / 유효인산 ${soilChem.ap??'—'}mg/kg`,
         status:'real',verifyUrl:'https://soil.rda.go.kr/',verifyLabel:'흙토람 확인'});
     }
@@ -1313,7 +1314,8 @@ async function _doAnalysis(address, coords){
       const re=getNIHHSHardiness(address,abs);
       nihHardiness=await re.catch(()=>nihHardiness)||nihHardiness;
     }
-    analysisResult={address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
+    const heatZone=await P.heat;
+    analysisResult={heatZone,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
     renderResults(analysisResult);
   } catch(e) {
@@ -1977,6 +1979,21 @@ async function getKMAClimateSummary(c){
 
 // 기후 자동분석 (KMA Hub 우선 → Open-Meteo ERA5 폴백)
 // ════════════════════════════════════════════
+// AHS Heat Zone — 일 최고기온 30°C 초과 일수 (최근 3년 평균, ERA5 재분석 · Open-Meteo)
+async function getHeatZone(c){
+  const y=new Date().getFullYear()-1, y0=y-2;
+  const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${c.lat.toFixed(4)}&longitude=${c.lng.toFixed(4)}`+
+    `&start_date=${y0}-01-01&end_date=${y}-12-31&daily=temperature_2m_max&timezone=Asia%2FSeoul`;
+  const d=await fetch(url,{signal:AbortSignal.timeout(12000)}).then(r=>r.json());
+  const t=d.daily&&d.daily.temperature_2m_max, ds=d.daily&&d.daily.time; if(!t) return null;
+  const per={}; t.forEach((v,i)=>{ if(v==null) return; const yr=ds[i].slice(0,4); per[yr]=(per[yr]||0)+(v>30?1:0); });
+  const arr=Object.values(per); if(!arr.length) return null;
+  const days=Math.round(arr.reduce((a,b)=>a+b,0)/arr.length);
+  const lim=[0,7,14,30,45,60,90,120,150,180,210];
+  let zone=1; for(const L of lim){ if(days>L) zone++; }
+  return{zone,days,years:arr.length,period:`${y0}~${y}`};
+}
+
 async function getClimateSummary(c){
   const isKorea=c.lat>=33&&c.lat<=39&&c.lng>=124&&c.lng<=132;
   // 한국: 기상청 ASOS 우선, 실패 시 ERA5 폴백
@@ -3578,8 +3595,8 @@ function derivePlantHabitat(d){
   const sunK = (solar!=null||sunH!=null) ? (csK||'e') : 's';
   const wetN = (soil?.realDrainage?1:0) + (cs?.annualPrecip?1:0);
   const moistK = wetN===2 ? (csK==='r'&&!String(dr).includes('추정') ? 'r' : 'e') : wetN===1 ? 'e' : 's';
-  const chemK = soil?.soilChemSource ? 'e' : 's';
-  const chemT = soil?.soilChemSource ? '법정동 농경지 평균 (필지값 아님)' : '자료 없음 — 임의값';
+  const chemK = soil?.soilChemSource ? (soil.soilChemBasis==='pnu' ? 'r' : 'e') : 's';
+  const chemT = soil?.soilChemSource ? (soil.soilChemBasis==='pnu' ? '농진청 토양검정 — 대상 필지' : '같은 법정동 농경지 검정 평균 — 대상지 값 아님') : '자료 없음 — 임의값';
 
   return {
     sun:   { label:sunLabel,   note:sunNote,   color:sunColor,   k:sunK,   t:sunK==='s'?'일사·일조 자료 없음 — 기본값':csK==='r'?'기상청 ASOS 관측소 평균':'ERA5 재분석 격자값' },
@@ -3746,7 +3763,7 @@ function renderResults(d){
           <div style="font-size:18px;margin-bottom:3px;">☀️</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">일조</div>
           <div style="font-size:12px;font-weight:700;color:${ph_d.sun.color};line-height:1.3;">${ph_d.sun.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sun.note}${ph_d.sun.k?'<br>'+V(ph_d.sun.k,ph_d.sun.t):''}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sun.note}${ph_d.sun.k?'<br>'+V(ph_d.sun.k,ph_d.sun.t):''}<br><a href="https://app.shadowmap.org/?lat=${d.coords.lat.toFixed(5)}&lng=${d.coords.lng.toFixed(5)}&zoom=17" target="_blank" rel="noopener" style="color:#4fc3f7;font-size:9px">☀️ 그림자 보기</a></div>
         </div>
         <!-- ② 수분요구 -->
         <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.moist.color};">
@@ -3866,6 +3883,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${hz&&String(hz.note||'').includes('USDA 정의')?V('e','극한최저기온 평균으로 계산'):V('s','위도 기준 대체값')}</span></div>
+        ${d.heatZone?`<div class="data-row"><span class="data-key">AHS Heat Zone</span><span class="data-val" style="color:#ffb74d;font-weight:700">Zone ${d.heatZone.zone} <span style="font-size:10px;color:#78909c;font-weight:400">(30°C 넘는 날 연 ${d.heatZone.days}일 · ${d.heatZone.period})</span>${V('e','ERA5 재분석 격자값 — 도심 열섬이 덜 반영돼 실제보다 낮게 나올 수 있음')}</span></div>`:''}
         <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
@@ -3907,6 +3925,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${V('s','위도 기준 대체값')}</span></div>
+        ${d.heatZone?`<div class="data-row"><span class="data-key">AHS Heat Zone</span><span class="data-val" style="color:#ffb74d;font-weight:700">Zone ${d.heatZone.zone} <span style="font-size:10px;color:#78909c;font-weight:400">(30°C 넘는 날 연 ${d.heatZone.days}일 · ${d.heatZone.period})</span>${V('e','ERA5 재분석 격자값 — 도심 열섬이 덜 반영돼 실제보다 낮게 나올 수 있음')}</span></div>`:''}
         <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
@@ -3932,9 +3951,9 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth!=null?(soil.effectiveDepth<25?`<span style="color:#ef9a9a;font-weight:600">매우 얕음 (${soil.effectiveDepth}cm) ⚠️</span>`:soil.effectiveDepth<50?`얕음 (${soil.effectiveDepth}cm)`:`${soil.effectiveDepth}cm`):'—'}${soil.realDepth?V('r','흙토람 필지 토양'):V('s','자료 없음 — 임의값')}</span></div>
         <div class="data-row"><span class="data-key">배수 (공식)</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}${soil.realDrainage?(String(soil.drainage).includes('추정')?V('e','흙토람 값을 식양토·평지로 보정'):V('r','흙토람 필지 토양')):V('s','자료 없음 — 임의값')}</span></div>
         ${soil.drainageNote?`<div style="font-size:10px;color:#ffcc80;padding:2px 0 4px">⚠️ ${soil.drainageNote}</div>`:''}
-        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}${soil.soilChemSource?V('e','법정동 농경지 평균 (필지값 아님)'):V('s','자료 없음 — 임의값')}</span></div>
-        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}${soil.soilChemSource?'g/kg':'%'}${soil.soilChemSource?V('e','법정동 농경지 평균 (필지값 아님)'):V('s','자료 없음 — 임의값')}</span></div>
-        ${soil.ap!=null?`<div class="data-row"><span class="data-key">유효인산</span><span class="data-val">${soil.ap}mg/kg${V('e','법정동 농경지 평균 (필지값 아님)')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}${soil.soilChemSource?(soil.soilChemBasis==='pnu'?V('r','농진청 토양검정 — 대상 필지 '+(soil.soilChemYear||'')):V('e','같은 법정동 농경지 검정 '+(soil.soilChemN||'')+'건 평균 ('+(soil.soilChemYear||'')+') — 대상지 값 아님, 도시 토양과 다를 수 있음')):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}${soil.soilChemSource?'g/kg':'%'}${soil.soilChemSource?(soil.soilChemBasis==='pnu'?V('r','농진청 토양검정 — 대상 필지 '+(soil.soilChemYear||'')):V('e','같은 법정동 농경지 검정 '+(soil.soilChemN||'')+'건 평균 ('+(soil.soilChemYear||'')+') — 대상지 값 아님, 도시 토양과 다를 수 있음')):V('s','자료 없음 — 임의값')}</span></div>
+        ${soil.ap!=null?`<div class="data-row"><span class="data-key">유효인산</span><span class="data-val">${soil.ap}mg/kg${soil.soilChemBasis==='pnu'?V('r','농진청 토양검정 — 대상 필지'):V('e','같은 법정동 농경지 검정 평균 — 대상지 값 아님')}</span></div>`:''}
         <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravelPct??'—'}% ${(soil.gravelPct??0)>30?'<span style="color:#ef9a9a">⚠️ 높음</span>':''}${V('s','자료 없음 — 지형으로 임의 추정')}</span></div>
         <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gwReal?soil.gwReal.level+'m EL'+V('r','국가지하수 관측정'):soil.gw+'m'+V('s','자료 없음 — 임의값')}</span></div>
         ${soil.gwReal?.depth!=null?`<div class="data-row"><span class="data-key">지하수 심도</span><span class="data-val">${soil.gwReal.depth}m (${soil.gwReal.wellName})${V('r','국가지하수 관측정')}</span></div>`:''}
@@ -4074,6 +4093,14 @@ function renderResults(d){
     </div>
 
     <button class="pdf-btn" onclick="downloadPDF()">📄 입지 분석 보고서 PDF 다운로드</button>
+    <div style="margin-top:10px;padding:8px 10px;background:#0d1b26;border-radius:8px;font-size:12px;color:#b0bec5;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <span>☀️ 광량 (현장 판단)</span>
+      <select id="lightPick" style="background:#132a3a;color:#e0f2f1;border:1px solid #1e3a4f;border-radius:6px;padding:3px 6px">
+        <option value="">자동 추정${dc&&dc.light?` (${dc.light})`:''}</option><option>양지</option><option>반양지</option><option>반음지</option><option>음지</option>
+      </select>
+      <a href="https://app.shadowmap.org/?lat=${d.coords.lat.toFixed(5)}&lng=${d.coords.lng.toFixed(5)}&zoom=17" target="_blank" rel="noopener" style="color:#4fc3f7">Shadowmap에서 그림자 보기 ↗</a>
+      <span style="font-size:10px;color:#78909c;width:100%">건물·나무 그림자를 보고 고르면 그 값이 식재툴로 넘어가요. 고르지 않으면 지역 일사량으로 추정한 값이 가요.</span>
+    </div>
     <button class="pdf-btn" onclick="sendToPlants()" style="margin-top:8px">🌿 식재툴로 보내기 (대상지 조건)</button>
     <div style="height:16px"></div>`;
 
@@ -4126,7 +4153,8 @@ function sendToPlants(){
   const prof={v:1,t:new Date().toISOString().slice(0,10),addr:r.address,lat:r.coords&&r.coords.lat,lng:r.coords&&r.coords.lng,
     zone:{usda:hz?hz.zone:'',basis:hz?(hz.basis==='climate'?hz.minTemp:'위도 기준 추정'):'',nih:nih&&nih.zone?nih.zone+'구역':''},
     soil:{ph:s.ph??null,phClass:(dc.soilSummary&&dc.soilSummary.phClass)||'',drainage:s.drainage||'',type:s.soil_type||''},
-    light:{code:dc.lightCode||'',label:dc.light||'',detail:dc.lightDetail||''},
+    light:(function(){const lp=(document.getElementById('lightPick')||{}).value;return lp?{code:'',label:lp,detail:'현장·Shadowmap 판단',pick:lp}:{code:dc.lightCode||'',label:dc.light||'',detail:dc.lightDetail||''};})(),
+    heat:r.heatZone?{zone:r.heatZone.zone,days:r.heatZone.days,period:r.heatZone.period}:null,
     moist:{code:dc.moistureCode||'',label:dc.moisture||'',detail:dc.moistureDetail||''},
     nut:(function(){try{const n=derivePlantHabitat(r).nut;return{label:n.label||'',note:n.note||''};}catch(e){return{label:''};}})(),
     climate:{mean:cs?cs.annualMean:null,precip:cs?cs.annualPrecip:null,absMin:cs?cs.absMin:null}};
@@ -5282,59 +5310,46 @@ async function getRealSoilRDA(coords, address){
 // (법정동코드 = PNU 앞 10자리)
 // ════════════════════════════════════════════
 async function getRealSoilChem(pnu){
-  if(!AVAIL.soilrda||!pnu||pnu.length<10){
-    console.log('🧪 농경지화학성 스킵 — soilrda:',(!!AVAIL.soilrda),'pnu:',pnu?.length);
-    return null;
-  }
-  const bjdCd=pnu.slice(0,10);
-  const base=`${WORKER_URL}/soil-stat`;
-  const numOfRows=5;
-  try{
-    const fetchStat=async(ep)=>{
-      const url=`${base}/${ep}?BJD_CD=${bjdCd}&numOfRows=${numOfRows}&pageNo=1`;
-      console.log('🧪 농경지화학성 요청:',url);
-      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-      const txt=await r.text();
-      console.log('🧪 농경지화학성',ep,'응답 앞 300자:',txt.slice(0,300));
-      return txt;
-    };
-    const [phTxt,omTxt,apTxt]=await Promise.all([
-      fetchStat('getFarmExamPhInfo'),
-      fetchStat('getFarmExamOmInfo'),
-      fetchStat('getFarmExamApInfo'),
-    ]);
-
-    // 모든 태그명 시도 — API 버전/레이아웃 차이 흡수
-    const parseAvg=(txt,...tags)=>{
-      const xml=new DOMParser().parseFromString(txt,'text/xml');
-      const items=xml.getElementsByTagName('item');
-      if(!items.length){
-        // item 없을 때 다른 element 이름 시도
-        const allEls=[...xml.querySelectorAll('*')].filter(e=>e.children.length===0&&e.textContent.trim());
-        console.log('🧪 item 없음 — 전체 element:',allEls.map(e=>e.tagName+':'+e.textContent.trim()).slice(0,10).join(', '));
-        return null;
-      }
-      const vals=[...items].flatMap(it=>{
-        for(const tag of tags){
-          const el=it.getElementsByTagName(tag)[0];
-          if(el){const n=parseFloat(el.textContent);if(!isNaN(n)&&n>0)return[n];}
-        }
-        return[];
-      }).filter(v=>!isNaN(v)&&v>0);
-      if(!vals.length) return null;
-      return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
-    };
-
-    const ph=parseAvg(phTxt,'pH','phVal','avgPh','measPh','phAvg','dataValue');
-    const om=parseAvg(omTxt,'om','omVal','avgOm','measOm','omAvg','dataValue');
-    const ap=parseAvg(apTxt,'ap','apVal','avgAp','measAp','apAvg','availPhos','dataValue');
-
-    console.log('🧪 농경지화학성 파싱결과 — pH:',ph,'OM:',om,'AP:',ap,'BJD:',bjdCd);
-    if(ph!=null||om!=null){
-      return{ph,om,ap,bjdCd,source:'실제 (농촌진흥청 농경지화학성 통계 V2)',reliability:'real'};
+  // 농진청 토양검정 화학성 상세정보 V2 (1390802/SoilEnviron/SoilExam/V2) — 실제 검정값
+  // ① 대상 필지(PNU) 검정값 → ② 없으면 같은 법정동 검정값 평균
+  if(!AVAIL.soilrda||!pnu||pnu.length<10) return null;
+  const bjdCd=pnu.slice(0,10), base=`${WORKER_URL}/soil-exam`;
+  const parse=txt=>{
+    const xml=new DOMParser().parseFromString(txt,'text/xml');
+    const code=(xml.querySelector('result_Code,Result_Code,resultCode')||{}).textContent||'';
+    const items=[...xml.getElementsByTagName('item')].map(it=>{
+      const o={}; [...it.children].forEach(c=>o[c.tagName.toUpperCase()]=c.textContent.trim()); return o; });
+    return{code:code.trim(),items};
+  };
+  const get=async(ep,names,val,extra='')=>{
+    for(const nm of names){
+      try{
+        const t=await fetch(`${base}/${ep}?${nm}=${val}${extra}`,{signal:AbortSignal.timeout(7000)}).then(r=>r.text());
+        const r=parse(t);
+        if(r.code==='204') continue;          // 변수 이름이 다름 → 다음 이름
+        return r;
+      }catch(e){ return null; }
     }
     return null;
-  }catch(e){console.warn('농경지화학성 V2 실패:',e.message);return null;}
+  };
+  const num=v=>{const n=parseFloat(v);return isNaN(n)||n<=0?null:n;};
+  const avg=a=>a.length?+(a.reduce((x,y)=>x+y,0)/a.length).toFixed(1):null;
+  try{
+    const one=await get('getSoilExam',['PNU_Code','PNU_CD','PNU_Cd'],pnu);
+    const it=one&&one.items.find(x=>num(x.ACID)!=null);
+    if(it){
+      return{ph:num(it.ACID),om:num(it.OM),ap:num(it.VLDPHA),bjdCd,basis:'pnu',n:1,year:it.ANY_YEAR||'',
+        source:`실제 (농진청 토양검정 — 대상 필지 ${it.ANY_YEAR||''})`,reliability:'real'};
+    }
+    const list=await get('getSoilExamList',['STDG_CD','Stdg_Cd','BJD_Code'],bjdCd,'&numOfRows=100&pageNo=1');
+    const its=list?list.items.filter(x=>num(x.ACID)!=null):[];
+    if(!its.length) return null;
+    const yrs=its.map(x=>x.ANY_YEAR).filter(Boolean).sort();
+    return{ph:avg(its.map(x=>num(x.ACID)).filter(v=>v!=null)),om:avg(its.map(x=>num(x.OM)).filter(v=>v!=null)),
+      ap:avg(its.map(x=>num(x.VLDPHA)).filter(v=>v!=null)),bjdCd,basis:'dong',n:its.length,
+      year:yrs.length?(yrs[0]===yrs[yrs.length-1]?yrs[0]:yrs[0]+'~'+yrs[yrs.length-1]):'',
+      source:`실제 (농진청 토양검정 — 같은 법정동 농경지 ${its.length}건 평균)`,reliability:'real'};
+  }catch(e){console.warn('토양검정 화학성 실패:',e.message);return null;}
 }
 
 // ════════════════════════════════════════════
