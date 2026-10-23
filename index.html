@@ -5335,13 +5335,13 @@ async function getRealSoilChem(pnu){
   const num=v=>{const n=parseFloat(v);return isNaN(n)||n<=0?null:n;};
   const avg=a=>a.length?+(a.reduce((x,y)=>x+y,0)/a.length).toFixed(1):null;
   try{
-    const one=await get('getSoilExam',['PNU_Code','PNU_CD','PNU_Cd'],pnu);
+    const one=await get('getSoilExam',['PNU_CD','PNU_Cd'],pnu);
     const it=one&&one.items.find(x=>num(x.ACID)!=null);
     if(it){
       return{ph:num(it.ACID),om:num(it.OM),ap:num(it.VLDPHA),bjdCd,basis:'pnu',n:1,year:it.ANY_YEAR||'',
         source:`실제 (농진청 토양검정 — 대상 필지 ${it.ANY_YEAR||''})`,reliability:'real'};
     }
-    const list=await get('getSoilExamList',['STDG_CD','Stdg_Cd','BJD_Code'],bjdCd,'&numOfRows=100&pageNo=1');
+    const list=await get('getSoilExamList',['STDG_CD','Stdg_Cd'],bjdCd,'&Page_Size=100&Page_No=1');
     const its=list?list.items.filter(x=>num(x.ACID)!=null):[];
     if(!its.length) return null;
     const yrs=its.map(x=>x.ANY_YEAR).filter(Boolean).sort();
