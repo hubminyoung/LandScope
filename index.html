@@ -911,7 +911,7 @@ async function _doAnalysis(address, coords){
       species: Promise.allSettled([T(getRealSpeciesEcobank(coords),12000), Promise.resolve(null), T(getGyeonggiProtected(coords, address),10000)]),
       env:     Promise.allSettled([T(getRealEnvGrade(coords),10000), T(getRealLandcover(coords),10000), T(getRealAgriWeather(coords, address),10000)]),
       heat:    T(getHeatZone(coords),13000),
-      clim:    Promise.allSettled([T(getClimateSummary(coords),15000), T(getNIHHSHardiness(address),10000)]),
+      clim:    Promise.allSettled([T(getClimateSummary(coords),15000), T(getNIHHSHardiness(coords),10000)]),
     };
     P.soilChem = P.pnu.then(pn=>T(getRealSoilChem(pn),10000));
     const [osmRaw, elevData, weatherData] = await Promise.allSettled([
@@ -1308,13 +1308,8 @@ async function _doAnalysis(address, coords){
     }
     // KMAHUB 기후통계의 연강수량으로 water 객체 보충 (실측 우선)
     if(climateSummary?.annualPrecip) water.annualPrecip=climateSummary.annualPrecip;
-    let nihHardiness=nihResult.status==='fulfilled'?nihResult.value:null;
+    const nihHardiness=nihResult.status==='fulfilled'?nihResult.value:null;
     // absMin 있으면 시도 내 정확 구역 재매칭
-    if(nihHardiness&&climateSummary?.absMin){
-      const abs=climateSummary.absMin;
-      const re=getNIHHSHardiness(address,abs);
-      nihHardiness=await re.catch(()=>nihHardiness)||nihHardiness;
-    }
     const heatZone=await P.heat;
     analysisResult={heatZone,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
@@ -2171,41 +2166,13 @@ function extractSido(address){
 
 // 농촌진흥청 국립원예특작과학원 식물내한성 지도 조회
 // Worker 라우트: /nihhs → https://apis.data.go.kr/1390804/Nihhs_Fruit_Area3/
-async function getNIHHSHardiness(address, absMinHint=null){
-  try{
-    const sido=extractSido(address);
-    if(!sido) return null;
-    if(!AVAIL.soilrda) return null;
-    const url=`${WORKER_URL}/nihhs/hardyMap?sido=${encodeURIComponent(sido)}&numOfRows=20&pageNo=1`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-    const text=await r.text();
-    if(!text||!text.includes('<item>')) return null;
-    const xml=new DOMParser().parseFromString(text,'text/xml');
-    const items=Array.from(xml.querySelectorAll('item'));
-    if(!items.length) return null;
-    // 여러 태그명 시도 (API 버전에 따라 다를 수 있음)
-    const get=(item,...tags)=>{for(const t of tags){const el=item.querySelector(t);if(el?.textContent?.trim())return el.textContent.trim();}return '';};
-    const zones=items.map(item=>({
-      grade:get(item,'hardyGrade','내한성등급','hrdnsGrd','hardnessGrade'),
-      tempRange:get(item,'tmpRange','온도범위','tempRange','tmpRngNm'),
-      areaPct:parseFloat(get(item,'areaPcnt','면적비율','areaPct','areaPcntNm')||'0')
-    })).filter(z=>z.grade);
-    if(!zones.length) return null;
-    // absMin 있으면 온도 범위로 정확 매칭, 없으면 면적 최다 구역
-    let matched=null;
-    if(absMinHint!==null){
-      matched=zones.find(z=>{
-        const nums=(z.tempRange||'').match(/-?\d+\.?\d*/g);
-        if(!nums||nums.length<2) return false;
-        const lo=Math.min(parseFloat(nums[0]),parseFloat(nums[1]));
-        const hi=Math.max(parseFloat(nums[0]),parseFloat(nums[1]));
-        return absMinHint>=lo&&absMinHint<hi;
-      });
-    }
-    if(!matched) matched=[...zones].sort((a,b)=>b.areaPct-a.areaPct)[0];
-    console.log('✅ NIHHS 내한성:',matched.grade,matched.tempRange,'(시도:',sido+')');
-    return{zone:matched.grade,tempRange:matched.tempRange,areaPct:matched.areaPct,sido,source:'농촌진흥청 국립원예특작과학원'};
-  }catch(e){console.warn('NIHHS 내한성 오류:',e.message);return null;}
+async function getNIHHSHardiness(c){
+  // 농진청 식물내한성지도(fruit.nihhs.go.kr) — 좌표의 연 최저기온 평균(최근 평년 1991–2020) → USDA 구역
+  const r=await fetch(`${WORKER_URL}/hardiness-map?x=${c.lng.toFixed(6)}&y=${c.lat.toFixed(6)}&layerNm=PHZM199120201`,{signal:AbortSignal.timeout(8000)});
+  const v=parseFloat((await r.text()).trim());
+  if(!r.ok||isNaN(v)||v<-60||v>20) return null;
+  const z=usdaZoneC(v);
+  return{zone:z.zone,tempRange:`연 최저기온 평균 ${v.toFixed(1)}°C · 1991–2020`,minAvg:+v.toFixed(1),source:'농촌진흥청 식물내한성지도'};
 }
 
 // 국토환경성 등급 추정 (비오톱·생태자연도 기반 시뮬레이션)
@@ -3827,7 +3794,7 @@ function renderResults(d){
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${hz&&String(hz.note||'').includes('USDA 정의')?V('e','극한최저기온 평균으로 계산'):V('s','위도 기준 대체값')}</span></div>
         ${d.heatZone?`<div class="data-row"><span class="data-key">AHS Heat Zone</span><span class="data-val" style="color:#ffb74d;font-weight:700">Zone ${d.heatZone.zone} <span style="font-size:10px;color:#78909c;font-weight:400">(30°C 넘는 날 연 ${d.heatZone.days}일 · ${d.heatZone.period})</span>${V('e','ERA5 재분석 격자값 — 도심 열섬이 덜 반영돼 실제보다 낮게 나올 수 있음')}</span></div>`:''}
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+' <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
@@ -3869,7 +3836,7 @@ function renderResults(d){
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
         <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${V('s','위도 기준 대체값')}</span></div>
         ${d.heatZone?`<div class="data-row"><span class="data-key">AHS Heat Zone</span><span class="data-val" style="color:#ffb74d;font-weight:700">Zone ${d.heatZone.zone} <span style="font-size:10px;color:#78909c;font-weight:400">(30°C 넘는 날 연 ${d.heatZone.days}일 · ${d.heatZone.period})</span>${V('e','ERA5 재분석 격자값 — 도심 열섬이 덜 반영돼 실제보다 낮게 나올 수 있음')}</span></div>`:''}
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+' <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
@@ -4102,7 +4069,7 @@ function sendToPlants(){
   const r=analysisResult; if(!r){alert('먼저 입지 분석을 실행하세요.');return;}
   const dc=r.designCond||{}, s=r.soil||{}, hz=r.hardiness, nih=r.nihHardiness, cs=r.climateSummary;
   const prof={v:1,t:new Date().toISOString().slice(0,10),addr:r.address,lat:r.coords&&r.coords.lat,lng:r.coords&&r.coords.lng,
-    zone:{usda:hz?hz.zone:'',basis:hz?(hz.basis==='climate'?hz.minTemp:'위도 기준 추정'):'',nih:nih&&nih.zone?nih.zone+'구역':''},
+    zone:{usda:hz?hz.zone:'',basis:hz?(hz.basis==='climate'?hz.minTemp:'위도 기준 추정'):'',nih:nih&&nih.zone?nih.zone+' ('+nih.tempRange+')':''},
     soil:{ph:s.ph??null,phClass:(dc.soilSummary&&dc.soilSummary.phClass)||'',drainage:s.drainage||'',type:s.soil_type||''},
     light:(function(){const lp=(document.getElementById('lightPick')||{}).value;return lp?{code:'',label:lp,detail:'현장·Shadowmap 판단',pick:lp}:{code:dc.lightCode||'',label:dc.light||'',detail:dc.lightDetail||''};})(),
     heat:r.heatZone?{zone:r.heatZone.zone,days:r.heatZone.days,period:r.heatZone.period}:null,
