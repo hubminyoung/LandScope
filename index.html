@@ -870,7 +870,7 @@ async function _doAnalysis(address, coords){
     const pnuP=T(fetchPNU(coords.lat, coords.lng),10000);
     const P={
       aq:      T(getRealAirQualityOAQ(coords),10000),
-      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),8000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),8000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
+      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),10000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),12000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
       mcee:    T(fetchMceeLC(coords.lat, coords.lng),10000),
       pnu:     pnuP,
       air:     T(getRealAir(coords),10000),
@@ -4928,7 +4928,7 @@ async function getRealUrban(c){
     // POINT 쿼리는 강/수역 위 좌표에서 NOT_FOUND 발생 → BBOX로 주변 300m 범위 검색
     const d=0.003; // 약 300m
     const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
-    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=${bbox}&crs=EPSG:4326&size=5&geometry=false&attribute=true`;
+    const base=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=${bbox}&crs=EPSG:4326&size=10&geometry=false&attribute=true`;
     // UQ111 용도지역, UQ112 용도지구, UQ113 용도구역(개발제한), NSR001 자연공원
     const fetchVworld=async(url)=>{
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
@@ -4956,9 +4956,14 @@ async function getRealUrban(c){
     nedZoneList.filter(z=>z!==nedZone).forEach(zn=>{ if(!restr.includes(zn)) restr.push(zn); });
 
     // ① 용도지역 (NED WFS 실패 시 Data API UQ111로 보완)
-    const r1use=(r1p.status==='fulfilled'&&r1p.value?.response?.status==='OK')?r1p:r1;   // 좌표 조회 우선, 없으면 주변 300m
-    if((zone==='확인필요'||!zone)&&r1use.status==='fulfilled'&&r1use.value?.response?.status==='OK'){
-      const f=r1use.value.response.result?.featureCollection?.features||[];
+    // 좌표 조회 우선. 좌표 자리에 이름이 비어 있으면(자료 공백) 주변 300m 결과 중 같은 시군구의 것을 씀
+    const feats=r=>(r.status==='fulfilled'&&r.value?.response?.status==='OK')?(r.value.response.result?.featureCollection?.features||[]):[];
+    const named=f=>f.filter(x=>(x.properties.uname||x.properties.UQ111_UQ111NM||'').trim());
+    const pf=feats(r1p), sigg=pf[0]?.properties?.sigg_name||'';
+    const bf=named(feats(r1));
+    const pick=named(pf)[0]||bf.find(x=>x.properties.sigg_name===sigg)||bf[0];
+    if((zone==='확인필요'||!zone)&&pick){
+      const f=[pick];
       if(f.length>0){
         const p=f[0].properties;
         zone=p.uname||p.UQ111_UQ111NM||p.PRPOS_AREA_DSTRC_NM||'확인필요';   // VWorld 필드명이 uname으로 바뀜
@@ -5519,7 +5524,7 @@ async function getRealBusStops(c){
   try{
     // GPS 좌표 기반 반경 내 버스 정류장 조회
     const url=`${WORKER_URL}/bus-stop/getCrdntPrxmtSttnList?numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
+    const r=await fetch(url,{signal:AbortSignal.timeout(9000)});
     const text=await r.text();
     if(text.includes('SERVICE_KEY')||text.includes('REGISTERED')||text.includes('Unexpected')) return null;
     // XML 파싱
@@ -5620,7 +5625,7 @@ async function getMoisPopulation(pnu){
     const d=new Date(Date.now()-back*864e5), ym=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
     try{
       const url=`${WORKER_URL}/mois/stdgSexdAgePpltn/selectStdgSexdAgePpltn?stdgCd=${code}&srchFrYm=${ym}&srchToYm=${ym}&lv=3&regSeCd=1&type=JSON&numOfRows=100&pageNo=1`;
-      const j=await (await fetch(url,{signal:AbortSignal.timeout(7000)})).json();
+      const j=await (await fetch(url,{signal:AbortSignal.timeout(11000)})).json();   // 법정동 조회는 8~9초 걸림
       let it=j?.Response?.items?.item; if(!it) continue; if(!Array.isArray(it)) it=[it];
       const x=it.find(i=>i.stdgCd===code); if(!x) continue;
       const n=k=>+(x[k]||0), dec=a=>n('male'+a+'AgeNmprCnt')+n('feml'+a+'AgeNmprCnt');
