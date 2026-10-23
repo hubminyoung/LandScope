@@ -68,8 +68,15 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1923;color:#e0e6ed;heig
 .tab-bar{display:flex;gap:2px;margin-bottom:12px;background:#0d1b26;border-radius:8px;padding:3px;flex-wrap:wrap;}
 .tab-btn{flex:1;min-width:48px;padding:7px 4px;border:none;background:transparent;color:#78909c;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;border-radius:6px;transition:all .2s;}
 .tab-btn.active{background:#0288d1;color:white;}
-.tab-content{display:none;}
-.tab-content.active{display:block;}
+.tab-content{display:block;}
+/* 결과: 사이드바 넓힘 + 8개 섹션 2열 전부 펼침 */
+.sidebar{transition:width .3s;}
+body.has-results .sidebar{width:min(820px,64vw);}
+#tab-card .tab-bar{position:sticky;top:-12px;z-index:5;}
+.tab-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;align-items:start;}
+.tab-grid .tab-content{background:#0d1b26;border-radius:8px;padding:10px;min-width:0;scroll-margin-top:52px;}
+.tab-grid .tab-content::before{content:attr(data-title);display:block;font-size:12px;font-weight:700;color:#4fc3f7;margin-bottom:8px;}
+#tab-anomaly{order:1}#tab-climate{order:2}#tab-soil{order:3}#tab-water{order:4}#tab-eco{order:5}#tab-urban{order:6}#tab-social{order:7}#tab-perf{order:8}
 
 .anomaly-list{display:flex;flex-direction:column;gap:6px;}
 .anomaly-item{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;}
@@ -460,6 +467,20 @@ if(location.protocol==='file:'){document.getElementById('localhost-banner').styl
 // Worker URL (전역 — 타일 레이어에서 사용)
 // ════════════════════════════════════════════
 const WORKER_URL='https://siteanl.younrake.workers.dev';
+// VWorld는 해외 서버(Cloudflare) 접속을 막아서 worker 경유가 실패함 → 브라우저에서 직접 호출 (키는 등록 도메인에서만 작동)
+const VWORLD_KEY='525DBFC7-F789-3094-871F-CD46831310CB', VWORLD_DOMAIN='hubminyoung.github.io';
+function vwJsonp(url, ms){
+  return new Promise((resolve,reject)=>{
+    const cb='__vw'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+    const s=document.createElement('script'); let done=false;
+    const end=()=>{done=true; try{delete window[cb];}catch(e){window[cb]=undefined;} s.remove();};
+    window[cb]=d=>{ if(done) return; end(); resolve(d); };
+    s.onerror=()=>{ if(done) return; end(); reject(new Error('VWorld 요청 실패')); };
+    s.src=url+(url.includes('?')?'&':'?')+'key='+encodeURIComponent(VWORLD_KEY)+'&domain='+VWORLD_DOMAIN+'&callback='+cb;
+    document.head.appendChild(s);
+    setTimeout(()=>{ if(done) return; end(); reject(new Error('VWorld 응답 시간 초과')); }, ms||8000);
+  });
+}
 
 // ════════════════════════════════════════════
 // 비밀번호 보호 — CFG(WORKER_URL) 정의 직후에 위치
@@ -479,6 +500,15 @@ let APP_PASS = localStorage.getItem('ls_pass') || '';
   const _orig = window.fetch.bind(window);
   window.fetch = function(url, init) {
     init = init || {};
+    // VWorld 데이터·주소 API → 브라우저 직접 호출(JSONP), NED WFS(직접 호출 불가) → 즉시 실패해서 Data API로 넘어감
+    if (typeof url === 'string' && url.startsWith(WORKER_URL + '/vworld-')) {
+      const rest = url.slice(WORKER_URL.length);
+      const m = rest.match(/^\/vworld-(data|address)(\?.*)?$/);
+      // geomFilter BOX는 'BOX(x1,y1,x2,y2)' 형식만 받음 (예전 'BOX(x1 y1,x2 y2)' 형식 변환)
+      const q = (m && m[2] || '?').replace(/BOX\(([-\d.]+)(?:%20| )([-\d.]+),([-\d.]+)(?:%20| )([-\d.]+)\)/g, 'BOX($1,$2,$3,$4)');
+      if (m) return vwJsonp('https://api.vworld.kr/req/' + m[1] + q).then(d => new Response(JSON.stringify(d), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      if (rest.startsWith('/vworld-ned-wfs')) return Promise.reject(new Error('NED WFS 미사용 (VWorld 해외 접속 차단)'));
+    }
     if (typeof url === 'string' && url.startsWith(WORKER_URL) && APP_PASS) {
       init = Object.assign({}, init, {
         headers: Object.assign({}, init.headers || {}, { 'X-Access-Password': APP_PASS })
@@ -540,7 +570,7 @@ function resetPass(){
 const map = L.map('map').setView([37.5,127.0],12);
 const BM = {
   osm:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',subdomains:'abc',maxZoom:20}),
-  vworld: L.tileLayer(`${WORKER_URL}/vworld-base/{z}/{y}/{x}`,{attribution:'© 국토지리정보원 VWorld',maxZoom:19,tileSize:256}),
+  vworld: L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`,{attribution:'© 국토지리정보원 VWorld',maxZoom:19,tileSize:256}),
   sat:    L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
   hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{attribution:'© Google',subdomains:'0123',maxZoom:21}),
   topo:   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{attribution:'© OpenTopoMap',subdomains:'abc',maxZoom:17})
@@ -549,7 +579,7 @@ const BM = {
 let vworldLabelLayer=null;
 function toggleVworldLabel(on){
   if(on){
-    if(!vworldLabelLayer) vworldLabelLayer=L.tileLayer(`${WORKER_URL}/vworld-hybrid/{z}/{y}/{x}`,{attribution:'© VWorld',maxZoom:19,tileSize:256,zIndex:500});
+    if(!vworldLabelLayer) vworldLabelLayer=L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Hybrid/{z}/{y}/{x}.png`,{attribution:'© VWorld',maxZoom:19,tileSize:256,zIndex:500});
     map.addLayer(vworldLabelLayer);
   }else if(vworldLabelLayer){map.removeLayer(vworldLabelLayer);}
 }
@@ -609,9 +639,9 @@ function toggleCadastral(){
       return;
     }
     // VWorld WMTS 지적편집도 — Worker 경유 (키 서버 보관)
-    cadastralLayer=L.tileLayer(
-      `${WORKER_URL}/vworld-cadastral/{z}/{y}/{x}`,
-      {maxZoom:19,opacity:0.85,tileSize:256,
+    cadastralLayer=L.tileLayer.wms('https://api.vworld.kr/req/wms',
+      {layers:'lp_pa_cbnd_bubun',styles:'lp_pa_cbnd_bubun',format:'image/png',transparent:true,version:'1.3.0',
+       KEY:VWORLD_KEY,DOMAIN:VWORLD_DOMAIN,maxZoom:19,opacity:0.85,tileSize:256,
        attribution:'© 국토지리정보원 VWorld 지적편집도',
        errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
     ).addTo(map);
@@ -1085,7 +1115,7 @@ async function _doAnalysis(address, coords){
     // ── 농경지화학성 V2 (pH·유기물·유효인산) + 지하수위 + 토양오염도 병렬 조회 ──
     const [soilChemRes, gwRes, soilContamRes] = await Promise.allSettled([
       getRealSoilChem(pnu),
-      getRealGroundwater(coords),
+      Promise.resolve(null), // 지하수: 위치 기반 조회 서비스 폐지로 제외 (2026-10)
       getRealSoilContamination(address)
     ]);
     const soilChem    = soilChemRes.status==='fulfilled'    ? soilChemRes.value    : null;
@@ -1126,7 +1156,7 @@ async function _doAnalysis(address, coords){
     // ── 서식종: 에코뱅크(1순위) + NIBR(2순위) + 경기도 보호종 병렬 조회 ──
     const [ecobankSpecies, realSpecies, ggProtected] = await Promise.allSettled([
       getRealSpeciesEcobank(coords),
-      getRealSpeciesNIBR(coords),
+      Promise.resolve(null), // 국립생물자원관 멸종위기종 서비스 폐지로 제외 (2026-10)
       getGyeonggiProtected(coords, address)
     ]);
     const speciesData = ecobankSpecies.value || realSpecies.value || ggProtected.value;
@@ -1263,6 +1293,7 @@ async function _doAnalysis(address, coords){
     clearInterval(timer);ld.style.display='none';btn.disabled=false;
     alert('분석 오류: '+e.message);
     document.getElementById('emptyState').style.display='flex';
+    document.body.classList.remove('has-results'); setTimeout(()=>{try{map.invalidateSize();}catch(e){}},350);
   } finally {
     _analysisRunning=false;
   }
@@ -3530,261 +3561,10 @@ function derivePlantHabitat(d){
   };
 }
 
-// ═══════════════════════════════════════════════════════════
-// 🌿 BdS Staudenmischungen 정적 DB (staudenmischungen.de)
-// licht: sonnig/absonnig/halbschattig/schattig
-// feucht: trocken/frisch/feucht/nass
-// naehr: gering/normal/hoch
-// ═══════════════════════════════════════════════════════════
-const STAUDEN_DB=[
-  // ── SONNIG + TROCKEN ──
-  {name:'Bernburger Blütensteppe',slug:'bernburger-bluetensteppe',
-   desc:'건조·양지형 스텝 믹스. 은빛 초본+라벤더·백리향의 강인한 조합.',
-   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
-   anw:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen','Hausgärten'],heim:false,winter:false},
-  {name:'Bernburger Blütensteppe heimisch',slug:'bernburger-bluetensteppe-heimisch',
-   desc:'독일 자생종 위주의 건조 스텝 믹스. 생태적 가치 높고 곤충 식이식물 다수.',
-   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
-   anw:['Verkehrskreisel','Parkanlagen','Randstreifen/Böschungen'],heim:true,winter:false},
-  {name:'Silbersommer',slug:'silbersommer',
-   desc:'은빛 잎·노랑·보라의 건조지 여름 믹스. 실버-그린 테마.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen'],heim:false,winter:false},
-  {name:'Indian Sunset',slug:'indian-sunset',
-   desc:'노랑·주황·붉은 따뜻한 색조의 건조지 믹스. 강렬한 석양빛 색감.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Verkehrskreisel','Hausgärten','Parkanlagen'],heim:false,winter:false},
-  {name:'Wintersilber',slug:'wintersilber',
-   desc:'겨울 은빛 질감의 초지 믹스. 동절기 관상가치 우수.',
-   licht:['sonnig'],feucht:['trocken'],naehr:'gering',
-   anw:['Verkehrskreisel','Parkanlagen'],heim:false,winter:true},
-  {name:'Wintergold',slug:'wintergold',
-   desc:'금빛 동절기 관상 믹스. 황색 초본·씨앗 이삭의 구조미.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Parkanlagen','Gewerbliches Grün'],heim:false,winter:true},
-  // ── SONNIG + TROCKEN-FRISCH (Steppen-Heide) ──
-  {name:'Filigran',slug:'filigran',
-   desc:'세밀한 줄기·잎 텍스처. 가볍고 투명감 있는 건조~보통 지형 믹스.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Deep Purple',slug:'deep-purple',
-   desc:'보라·자주 톤 중심의 스텝-히스 식재 믹스. 귀족적인 강렬함.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Purple Silver Summer',slug:'purple-silver-summer',
-   desc:'보라와 실버가 어우러진 여름 건조지 믹스.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'gering',
-   anw:['Verkehrskreisel','Parkanlagen'],heim:false,winter:false},
-  {name:'Bernburger Blütenflamme',slug:'bernburger-bluetenflamme',
-   desc:'주황·노랑·붉은 불꽃 색조의 역동적인 건조~보통 지형 믹스.',
-   licht:['sonnig'],feucht:['trocken','frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Verkehrskreisel'],heim:false,winter:false},
-  {name:'Indianersommer',slug:'indianersommer',
-   desc:'늦여름~가을 황금빛 프레리 믹스. 국화·억새류 중심.',
-   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
-  // ── SONNIG + FRISCH (Freifläche Wildstaudencharakter) ──
-  {name:'Bernburger Blütenwandel',slug:'bernburger-bluetenwandel',
-   desc:'계절별 변화가 풍부한 양지 초지 믹스. 봄~가을 지속적 개화.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Öffentliche Grünflächen','Gewerbliches Grün','Hausgärten'],heim:false,winter:false},
-  {name:'Bernburger Blütenwandel heimisch',slug:'bernburger-bluetenwandel-heimisch',
-   desc:'자생종 위주 계절 변화형 양지 초지 믹스. 높은 생태적 가치.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],heim:true,winter:false},
-  {name:'Präriesommer',slug:'praeriesommer',
-   desc:'북미 프레리 스타일 여름 믹스. 키 큰 초본과 원추형 꽃 중심.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
-  {name:'Präriemorgen',slug:'praeriemorgen',
-   desc:'프레리 아침을 연상시키는 청아한 색조의 양지 초지 믹스.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
-  {name:'Blütentraum',slug:'bluetentraum',
-   desc:'핑크·라일락·흰색의 몽환적인 파스텔 꽃밭 믹스.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
-  {name:'Blütenzauber',slug:'bluetenzauber',
-   desc:'다채로운 색상의 양지 초지 믹스. 동화적이고 화사한 느낌.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Big Yellow',slug:'big-yellow',
-   desc:'노랑·황금빛 메인 테마의 양지 초지 믹스. 시각적 임팩트 강함.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Golden Wings',slug:'golden-wings',
-   desc:'금빛 날개처럼 빛나는 황금색 계열 믹스. 루드베키아·해바라기류.',
-   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'normal',
-   anw:['Parkanlagen','Verkehrskreisel','Öffentliche Grünflächen'],heim:false,winter:false},
-  {name:'Pink Paradise',slug:'pink-paradise',
-   desc:'핑크·로즈·라일락 낙원 느낌의 양지 믹스.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
-  {name:'Bernburger Blütenwoge',slug:'bernburger-bluetenwoge',
-   desc:'파도치듯 움직이는 키 큰 초본 중심의 역동적 초지 믹스.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],heim:false,winter:false},
-  {name:'Bernburger Blütenwucht',slug:'bernburger-bluetenwucht',
-   desc:'강인한 구조식물 위주의 건장하고 힘있는 양지 초지 믹스.',
-   licht:['sonnig'],feucht:['frisch','trocken'],naehr:'gering',
-   anw:['Randstreifen/Böschungen','Parkanlagen','Öffentliche Grünflächen'],heim:false,winter:false},
-  {name:'Bernburger Blütenserenade',slug:'bernburger-bluetenserenade',
-   desc:'서정적 리듬의 유려한 곡선형 양지 초지 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
-  // ── SONNIG/HALBSCHATTIG + FRISCH (Beet/Saum) ──
-  {name:'Bernburger Blütensaum',slug:'bernburger-bluetensaum',
-   desc:'경계부·가장자리 식재에 최적화된 반음지~양지 믹스. 도시 경계 녹화에 적합.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Randstreifen/Böschungen','Parkanlagen','Gewerbliches Grün','Flächen im ruhenden Verkehr'],heim:false,winter:false},
-  {name:'Bernburger Blütensaum heimisch',slug:'bernburger-bluetensaum-heimisch',
-   desc:'자생종 위주 경계부 믹스. 곤충·나비 유인 효과 탁월.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Randstreifen/Böschungen','Parkanlagen','Öffentliche Grünflächen'],heim:true,winter:false},
-  {name:'Farbensaum',slug:'farbensaum',
-   desc:'다채로운 색상의 경계부 믹스. 계절별 색 변화가 뚜렷.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Randstreifen/Böschungen','Parkanlagen','Hausgärten'],heim:false,winter:false},
-  {name:'Farbenspiel',slug:'farbenspiel',
-   desc:'색상 유희를 주제로 한 다색 조합 양지~반음지 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Candy Colour',slug:'candy-colour',
-   desc:'캔디처럼 달콤한 파스텔 다색 화단 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Licht & leicht',slug:'licht-leicht',
-   desc:'가볍고 투명감 있는 역광 효과 중심의 반음지~양지 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Morning Light',slug:'morning-light',
-   desc:'아침 빛을 테마로 한 밝고 청아한 느낌의 양지~반음지 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen'],heim:false,winter:false},
-  {name:'Spotlights',slug:'spotlights',
-   desc:'조명처럼 빛나는 포인트 식물 중심의 강조형 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Gewerbliches Grün','Hausgärten'],heim:false,winter:false},
-  {name:'Natürlich & robust',slug:'natuerlich-robust',
-   desc:'자연스럽고 강인한 다목적 양지~반음지 믹스. 관리 용이.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'gering',
-   anw:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Blütenmosaik',slug:'bluetenmosaik',
-   desc:'모자이크처럼 다양한 꽃색이 어우러지는 혼합 초지 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Öffentliche Grünflächen'],heim:false,winter:false},
-  // ── SONNIG, WINTER INTEREST ──
-  {name:'Bernburger Blütenwinter',slug:'bernburger-bluetenwinter',
-   desc:'동절기 구조미가 탁월한 사계절 초지 믹스. 씨앗 이삭·조형 줄기.',
-   licht:['sonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Verkehrskreisel','Gewerbliches Grün'],heim:false,winter:true},
-  {name:'Winterglanz',slug:'winterglanz',
-   desc:'겨울 빛 속에 반짝이는 구조미 중심의 4계절 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Gewerbliches Grün'],heim:false,winter:true},
-  {name:'Winterharmonie',slug:'winterharmonie',
-   desc:'겨울 조화를 주제로 한 절제된 미의 동절기 믹스.',
-   licht:['sonnig','absonnig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten'],heim:false,winter:true},
-  // ── HALBSCHATTIG + FRISCH (Gehölz-Rand) ──
-  {name:'Schattengeflüster',slug:'schattengefluester',
-   desc:'숲 가장자리형 반음지 믹스. 흰·보라·녹색 절제된 배색. 에피메디움·디기탈리스·폴리고나툼 조합.',
-   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Randstreifen/Böschungen','Mittelstreifen/Verkehrsteiler','Hausgärten','Gewerbliches Grün','Flächen im ruhenden Verkehr'],heim:false,winter:false},
-  {name:'Bernburger Blütenchill',slug:'bernburger-bluetenchill',
-   desc:'서늘하고 여유로운 파스텔 색조의 반음지 초지 믹스.',
-   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Hausgärten','Parkanlagen','Gewerbliches Grün'],heim:false,winter:false},
-  {name:'Bernburger Blütenschleier',slug:'bernburger-bluetenschleier',
-   desc:'베일처럼 섬세하고 투명한 질감의 반음지 믹스.',
-   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
-  {name:'Bernburger Blütenschatten',slug:'bernburger-bluetenschatten',
-   desc:'그늘진 환경 최적화 믹스. 고사리·호스타류·은방울꽃 중심.',
-   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Flächen im ruhenden Verkehr'],heim:false,winter:false},
-  {name:'Bernburger Blütenwinter schattig',slug:'bernburger-bluetenwinter-schattig',
-   desc:'그늘진 환경에서도 동절기 관상가치 있는 반음지 믹스.',
-   licht:['absonnig','halbschattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten'],heim:false,winter:true},
-  // ── SCHATTIG + FRISCH (Gehölz) ──
-  {name:'Schattenglanz',slug:'schattenglanz',
-   desc:'깊은 그늘에서 빛나는 반짝이는 잎과 섬세한 꽃의 그늘 믹스.',
-   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten','Flächen im ruhenden Verkehr'],heim:false,winter:false},
-  {name:'Schattenzauber',slug:'schattenzauber',
-   desc:'그늘 속 신비로운 느낌의 음지 식재 믹스.',
-   licht:['halbschattig','schattig'],feucht:['frisch'],naehr:'normal',
-   anw:['Parkanlagen','Hausgärten'],heim:false,winter:false},
-];
-
-// ═══════════════════════════════════════════════════════════
-// 🌿 식재 믹스 추천 엔진 (입지분석 결과 → BdS 믹스 매칭)
-// ═══════════════════════════════════════════════════════════
-function buildStaudenRecommendations(ph_d, urb, st, eco) {
-  const LICHT_ORDER = ['schattig','halbschattig','absonnig','sonnig'];
-  const FEUCHTE_ORDER = ['nass','feucht','frisch','trocken'];
-  const LICHT_MAP = {
-    '양지':['sonnig'],'반음지~양지':['sonnig','absonnig'],
-    '반음지':['absonnig','halbschattig'],'음지~반음지':['halbschattig','schattig']
-  };
-  const FEUCHTE_MAP = {
-    '건조':['trocken'],'건조~보통':['trocken','frisch'],'보통':['frisch'],
-    '보통~습윤':['frisch','feucht'],'습윤':['feucht'],'과습':['feucht','nass']
-  };
-  const NAEHR_ORDER=['gering','normal','hoch'];
-  const siteLicht=LICHT_MAP[ph_d.sun.label]||['sonnig','absonnig'];
-  const siteFeucht=FEUCHTE_MAP[ph_d.moist.label]||['frisch'];
-  const siteNaehr=ph_d.nut.label==='척박'?'gering':ph_d.nut.label==='비옥'?'hoch':'normal';
-  const ANW_PREF={
-    WET:['Randstreifen/Böschungen','Parkanlagen'],
-    DRY:['Verkehrskreisel','Mittelstreifen/Verkehrsteiler','Parkanlagen'],
-    URB:['Gewerbliches Grün','Parkanlagen','Flächen im ruhenden Verkehr','Verkehrskreisel'],
-    ECO:['Parkanlagen','Öffentliche Grünflächen','Randstreifen/Böschungen'],
-    HAZ:['Randstreifen/Böschungen'],
-    RIP:['Randstreifen/Böschungen','Parkanlagen'],
-  };
-  const siteAnwBase=ANW_PREF[st&&st.primary&&st.primary.code]||['Parkanlagen'];
-  const siteAnw=[...siteAnwBase];
-  if(urb&&urb.zone){if(urb.zone.includes('상업'))siteAnw.unshift('Gewerbliches Grün');if(urb.zone.includes('주거'))siteAnw.unshift('Hausgärten');}
-
-  const scored=STAUDEN_DB.map(mix=>{
-    let score=0;
-    // Light match (0-40 pts)
-    const lichtOverlap=mix.licht.filter(l=>siteLicht.includes(l)).length;
-    if(lichtOverlap>0){score+=40;}else{
-      const si1=Math.min(...siteLicht.map(l=>LICHT_ORDER.indexOf(l)));
-      const si2=Math.max(...siteLicht.map(l=>LICHT_ORDER.indexOf(l)));
-      const mi1=Math.min(...mix.licht.map(l=>LICHT_ORDER.indexOf(l)));
-      const mi2=Math.max(...mix.licht.map(l=>LICHT_ORDER.indexOf(l)));
-      if(Math.abs(si2-mi1)<=1||Math.abs(mi2-si1)<=1){score+=15;}else{return{mix,score:-1};}
-    }
-    // Moisture match (0-30 pts)
-    const fOverlap=mix.feucht.filter(f=>siteFeucht.includes(f)).length;
-    if(fOverlap>0){score+=30;}else{
-      const si1=Math.min(...siteFeucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
-      const si2=Math.max(...siteFeucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
-      const mi1=Math.min(...mix.feucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
-      const mi2=Math.max(...mix.feucht.map(f=>FEUCHTE_ORDER.indexOf(f)));
-      if(Math.abs(si2-mi1)<=1||Math.abs(mi2-si1)<=1){score+=10;}
-    }
-    // Nutrient match (0-15 pts)
-    const sni=NAEHR_ORDER.indexOf(siteNaehr),mni=NAEHR_ORDER.indexOf(mix.naehr);
-    score+=sni===mni?15:Math.abs(sni-mni)===1?7:0;
-    // Application bonus (0-15 pts)
-    if(mix.anw.some(a=>siteAnw.includes(a)))score+=15;
-    // Heimisch eco bonus
-    if(mix.heim&&eco&&eco.grade<=2)score+=5;
-    return{mix,score};
-  });
-  return scored.filter(r=>r.score>50).sort((a,b)=>b.score-a.score).slice(0,4);
-}
-
 function renderResults(d){
   const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,nihHardiness:nih,osm:osmD}=d;
   const sc=an.scores;
   const ph_d = derivePlantHabitat(d); // 식재 서식 조건
-  const staudenRec = buildStaudenRecommendations(ph_d, urb, st, eco);
 
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
@@ -3963,30 +3743,6 @@ function renderResults(d){
       <div class="source-row" style="margin-top:10px;">${ph_d.reliability}</div>
     </div>
 
-    ${staudenRec.length?`
-    <div class="card">
-      <div class="card-title">🌿 BdS 식재 믹스 추천 <span style="font-size:10px;color:#546e7a;font-weight:400">— staudenmischungen.de 서비스</span></div>
-      ${staudenRec.map(({mix,score})=>`
-        <div style="background:#0d1b26;border-radius:8px;padding:10px;margin-bottom:8px;border-left:3px solid ${score>=75?'#4fc3f7':score>=60?'#81c784':'#ffb74d'}">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
-            <a href="https://www.staudenmischungen.de/mischungsdetail/${mix.slug}.html" target="_blank" style="color:#4fc3f7;font-size:13px;font-weight:700;text-decoration:none;">${mix.name} ↗</a>
-            <span style="font-size:10px;background:#1a2a3a;padding:2px 7px;border-radius:4px;color:${score>=75?'#4fc3f7':score>=60?'#81c784':'#ffb74d'}">적합도 ${score}점</span>
-          </div>
-          <div style="font-size:11px;color:#b0bec5;margin-bottom:6px;line-height:1.5">${mix.desc}</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap">
-            <span class="badge b-blue">${mix.licht.join('·')}</span>
-            <span class="badge b-grey">${mix.feucht.join('·')}</span>
-            <span class="badge b-grey">영양: ${mix.naehr==='gering'?'척박':mix.naehr==='normal'?'보통':'비옥'}</span>
-            ${mix.heim?'<span class="badge b-green">자생종</span>':''}
-            ${mix.winter?'<span class="badge b-blue">동절기관상</span>':''}
-          </div>
-        </div>`).join('')}
-      <div style="font-size:10px;color:#455a64;margin-top:4px;">
-        📊 일조(${ph_d.sun.label}) · 수분(${ph_d.moist.label}) · 영양(${ph_d.nut.label}) 기반 매칭
-        &nbsp;·&nbsp; <a href="https://www.staudenmischungen.de/alle-staudenmischungen-im-ueberblick.html" target="_blank" style="color:#546e7a">전체 42개 믹스 보기 →</a>
-      </div>
-    </div>` : ''}
-
     <div class="card" id="tab-card">
       <div class="tab-bar">
         <button class="tab-btn active" onclick="tab('anomaly',this)">🔍 종합·SWOT</button>
@@ -3998,13 +3754,14 @@ function renderResults(d){
         <button class="tab-btn" onclick="tab('social',this)">⚖️ 법적·사회</button>
         <button class="tab-btn" onclick="tab('perf',this)" style="color:#4fc3f7;">📊 성능·데이터</button>
       </div>
+      <div class="tab-grid">
 
-      <div class="tab-content active" id="tab-anomaly">
+      <div class="tab-content" id="tab-anomaly" data-title="🔍 종합·SWOT">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:6px;letter-spacing:.06em">── Opportunities · Constraints ──</div>
         <div class="anomaly-list">${anomalyHtml}</div>
       </div>
 
-      <div class="tab-content" id="tab-eco">
+      <div class="tab-content" id="tab-eco" data-title="🌿 식생·생태">
         <!-- ① 생태자연도 상세정보 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 생태자연도 상세정보 ──</div>
         <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val" style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span></div>
@@ -4062,7 +3819,7 @@ function renderResults(d){
         <div class="source-row">⬡ ${lsc.source}</div>
       </div>
 
-      <div class="tab-content" id="tab-climate">
+      <div class="tab-content" id="tab-climate" data-title="🌤️ 기후·기상">
         ${cs?`
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
         <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${cs.annualMean}°C</span></div>
@@ -4131,7 +3888,7 @@ function renderResults(d){
         })()}
       </div>
 
-      <div class="tab-content" id="tab-soil">
+      <div class="tab-content" id="tab-soil" data-title="🏔️ 지형·토양">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토양 ──</div>
         ${soil.soilSeries?`<div class="data-row"><span class="data-key">토양통</span><span class="data-val" style="font-weight:600;color:#a5d6a7">${soil.soilSeries}</span></div>`:''}
         <div class="data-row"><span class="data-key">토성 (토양유형)</span><span class="data-val">${soil.soil_type}</span></div>
@@ -4169,7 +3926,7 @@ function renderResults(d){
         <div class="source-row">⬡ ${soil.source}</div>
       </div>
 
-      <div class="tab-content" id="tab-urban">
+      <div class="tab-content" id="tab-urban" data-title="🏗️ 인프라">
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
         <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}</span></div>
         ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목 (토지이용상황)</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
@@ -4194,7 +3951,7 @@ function renderResults(d){
         <div class="source-row">${urb.reliability==='real'?'● 실제 데이터':'⬡ 시뮬레이션'} · ${urb.source}</div>
       </div>
 
-      <div class="tab-content" id="tab-water">
+      <div class="tab-content" id="tab-water" data-title="🌊 수문·배수">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 우수유출 · 홍수위험 ──</div>
         <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodRisk==='높음'?badge(water.floodRisk,'red'):water.floodRisk==='중간'?badge(water.floodRisk,'yellow'):badge(water.floodRisk,'green')}</span></div>
         <div class="data-row"><span class="data-key">불투수율</span><span class="data-val">${water.impRatio}% ${water.impRatio>70?badge('LID 적용 권장','red'):water.impRatio>50?badge('개선 검토','yellow'):badge('양호','green')}</span></div>
@@ -4213,7 +3970,7 @@ function renderResults(d){
         <div class="source-row">${water.floodReliability==='real'?'● 홍수위험 실측 (국토부)':'⬡ 홍수위험 미연동'} · ${water.source}</div>
       </div>
 
-      <div class="tab-content" id="tab-social">
+      <div class="tab-content" id="tab-social" data-title="⚖️ 법적·사회">
         <!-- 법적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 법적 · 규제 조건 ──</div>
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
@@ -4238,7 +3995,7 @@ function renderResults(d){
         <div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>
       </div>
 
-      <div class="tab-content" id="tab-perf">
+      <div class="tab-content" id="tab-perf" data-title="📊 성능·데이터">
         <div class="perf-tab-content">
 
           <div style="font-size:11px;color:#546e7a;margin-bottom:8px;padding:8px;background:#0a1520;border-radius:6px;line-height:1.6;">
@@ -4274,6 +4031,7 @@ function renderResults(d){
         </div>
       </div>
       </div>
+    </div>
       </div>
     </div>
 
@@ -4283,6 +4041,7 @@ function renderResults(d){
 
   const rc=document.getElementById('resultContent');
   rc.innerHTML=html; rc.style.display='block';
+  document.body.classList.add('has-results'); setTimeout(()=>{try{map.invalidateSize();}catch(e){}},350);
   // 탭 카드를 결과 최상단으로 이동
   const _tc=document.getElementById('tab-card'); if(_tc) rc.prepend(_tc);
   requestAnimationFrame(()=>{
@@ -4292,9 +4051,8 @@ function renderResults(d){
 }
 
 function tab(id,btn){
-  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  const el=document.getElementById('tab-'+id); if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('tab-'+id).classList.add('active');
   btn.classList.add('active');
 }
 
@@ -4326,6 +4084,7 @@ function sendToPlants(){
     soil:{ph:s.ph??null,phClass:(dc.soilSummary&&dc.soilSummary.phClass)||'',drainage:s.drainage||'',type:s.soil_type||''},
     light:{code:dc.lightCode||'',label:dc.light||'',detail:dc.lightDetail||''},
     moist:{code:dc.moistureCode||'',label:dc.moisture||'',detail:dc.moistureDetail||''},
+    nut:(function(){try{const n=derivePlantHabitat(r).nut;return{label:n.label||'',note:n.note||''};}catch(e){return{label:''};}})(),
     climate:{mean:cs?cs.annualMean:null,precip:cs?cs.annualPrecip:null,absMin:cs?cs.absMin:null}};
   window.open('https://hubminyoung.github.io/plants/#site='+encodeURIComponent(JSON.stringify(prof)),'_blank');
 }
@@ -5755,7 +5514,7 @@ async function getRealBusStops(c){
   // data.go.kr KMA_KEY 공유 — 키 미설정 시 API 오류로 자연스럽게 null 반환
   try{
     // GPS 좌표 기반 반경 내 버스 정류장 조회
-    const url=`${WORKER_URL}/bus-stop?numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
+    const url=`${WORKER_URL}/bus-stop/getCrdntPrxmtSttnList?numOfRows=100&pageNo=1&gpsLati=${c.lat}&gpsLong=${c.lng}`;
     const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
     const text=await r.text();
     if(text.includes('SERVICE_KEY')||text.includes('REGISTERED')||text.includes('Unexpected')) return null;
