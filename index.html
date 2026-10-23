@@ -902,7 +902,7 @@ async function _doAnalysis(address, coords){
     const pnuP=T(fetchPNU(coords.lat, coords.lng),10000);
     const P={
       aq:      T(getRealAirQualityOAQ(coords),10000),
-      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),10000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),12000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
+      urban:   Promise.allSettled([T(getRealUrban(coords,pnuP.then(pn=>T(getLandUsePlan(pn),9000))),14000), T(getRealBusStops(coords),10000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),12000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
       mcee:    T(fetchMceeLC(coords.lat, coords.lng),10000),
       pnu:     pnuP,
       air:     T(getRealAir(coords),10000),
@@ -990,7 +990,7 @@ async function _doAnalysis(address, coords){
     // 용도지역 머지 (VWorld 데이터로 덮어쓰기)
     if(realUrban){
       urban={...urban,
-        zone:realUrban.zone, zoneBasis:realUrban.zoneBasis, fsr:realUrban.fsr, bcr:realUrban.bcr,
+        zone:realUrban.zone, zoneBasis:realUrban.zoneBasis, landUse:realUrban.landUse, nedZoneList:realUrban.nedZoneList, fsr:realUrban.fsr, bcr:realUrban.bcr,
         greenbelt:realUrban.greenbelt, inNaturalPark:realUrban.inNaturalPark,
         restr:realUrban.restr, districtNames:realUrban.districtNames,
         implications:[...(realUrban.implications||[]),...(urban.implications||[]).filter(i=>!realUrban.implications.some(ri=>ri===i))],
@@ -3616,8 +3616,8 @@ function renderResults(d){
   const _osm=!!osmD, _elevR=!!(elev&&elev.reliability==='real');
   const _csK=cs?(String(cs.source||'').includes('ASOS')?'r':cs.reliability==='real'?'e':'s'):'s';
   const _csT=cs?(_csK==='r'?'기상청 ASOS 관측소 평균':_csK==='e'?'ERA5 재분석 격자값 (관측소 아님)':'기후자료 없음 — 임의값'):'';
-  const _zoneK=urb.zoneBasis?(urb.zoneBasis==='좌표'?'r':'e'):(urb.zone&&!['확인필요','미확인'].includes(urb.zone)?'e':'');
-  const _zoneT=urb.zoneBasis?(urb.zoneBasis==='좌표'?'VWorld 용도지역 — 대상지 좌표':`VWorld 용도지역 — 좌표 위 자료 없어 ${urb.zoneBasis} 안에서 찾은 값`):'OSM 토지이용으로 추정';
+  const _zoneK=urb.zoneBasis?(['좌표','필지'].includes(urb.zoneBasis)?'r':'e'):(urb.zone&&!['확인필요','미확인'].includes(urb.zone)?'e':'');
+  const _zoneT=urb.zoneBasis?(urb.zoneBasis==='필지'?'VWorld 필지 토지이용계획 — 토지이음과 같은 자료':urb.zoneBasis==='좌표'?'VWorld 용도지역 — 대상지 좌표':`VWorld 용도지역 — 좌표 위 자료 없어 ${urb.zoneBasis} 안에서 찾은 값`):'OSM 토지이용으로 추정';
   const _restrK=String(urb.source||'').includes('VWorld')?'r':'e';
 
 
@@ -4032,7 +4032,12 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}${V(_zoneK,_zoneT)}</span></div>
         <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}${urb.fsr&&urb.bcr&&_zoneK&&!urb.greenbelt?V(_zoneK,'용도지역별 법정 상한 (국토계획법 시행령) — 조례로 달라질 수 있음'):''}</span></div>
         ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목</span><span class="data-val">${urb.nedLandUse}${V('r','국가중점데이터 토지특성')}</span></div>`:''}
-        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}${V(_restrK,_restrK==='r'?'VWorld 용도지구·구역':'OSM으로 추정')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
+        ${urb.landUse?`
+        <div class="data-row"><span class="data-key">국토계획법<br>지역·지구등</span><span class="data-val" style="font-size:11px;text-align:right">${urb.landUse.rows[0].join(', ')||'—'}${V('r','VWorld 필지 토지이용계획 — 토지이음과 같은 자료')}</span></div>
+        <div class="data-row"><span class="data-key">다른 법령<br>지역·지구등</span><span class="data-val" style="font-size:11px;text-align:right">${urb.landUse.rows[1].join(', ')||'—'}${V('r','VWorld 필지 토지이용계획 — 토지이음과 같은 자료')}</span></div>
+        ${urb.landUse.rows[2].length?`<div class="data-row"><span class="data-key">시행령 제9조④</span><span class="data-val" style="font-size:11px;text-align:right">${urb.landUse.rows[2].join(', ')}${V('r','VWorld 필지 토지이용계획 — 토지이음과 같은 자료')}</span></div>`:''}
+        <div style="text-align:right;font-size:11px;margin:2px 0 6px"><a href="https://www.eum.go.kr/web/ar/lu/luLandDet.jsp?pnu=${urb.landUse.pnu}&mode=search&isNoScr=script" target="_blank" rel="noopener" style="color:#4fc3f7">📋 토지이음에서 이 필지 보기 (${urb.landUse.addr}) ↗</a></div>`:''}
+        ${urb.landUse?'':urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}${V(_restrK,_restrK==='r'?'VWorld 용도지구·구역':'OSM으로 추정')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
         ${reg&&reg.items&&reg.items.length?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 식재 기준 · 녹지 비율 ──</div>
@@ -4943,7 +4948,7 @@ document.addEventListener('DOMContentLoaded',function(){
 // ════════════════════════════════════════════
 // 실제 API: 브이월드 — 용도지역
 // ════════════════════════════════════════════
-async function getRealUrban(c){
+async function getRealUrban(c,lupP){
   if(!AVAIL.vworld) return null;
   try{
     // ── 0) NED WFS 토지이용계획 (가장 신뢰성 높은 용도지역 데이터) ──
@@ -5036,7 +5041,9 @@ async function getRealUrban(c){
     const pf=feats(r1p), sigg=pf[0]?.properties?.sigg_name||'';
     const nb=named(feats(r1b)), bf=named(feats(r1));
     const pick=named(pf)[0]||nb.find(x=>x.properties.sigg_name===sigg)||nb[0]||bf.find(x=>x.properties.sigg_name===sigg)||bf[0];
-    const zoneBasis=named(pf)[0]?'좌표':nb.length?'반경 30m':bf.length?'주변 300m':'';
+    let zoneBasis=named(pf)[0]?'좌표':nb.length?'반경 30m':bf.length?'주변 300m':'';
+    const lup=lupP?await lupP:null;   // 필지 토지이용계획 (가장 정확)
+    if(lup&&lup.zone){ zone=lup.zone; zoneBasis='필지'; if(lup.zones.length>1) nedZoneList=lup.zones; }
     if((zone==='확인필요'||!zone)&&pick){
       const f=[pick];
       if(f.length>0){
@@ -5129,7 +5136,7 @@ async function getRealUrban(c){
     if(nedLandUse&&!['대지','잡종지'].includes(nedLandUse)) imp.push(`📋 지목: ${nedLandUse} — 용도변경(형질변경) 검토 필요`);
 
     const srcParts=nedZone?'VWorld 국가중점데이터 WFS(NED)+LT_C_UQ111~UQ141':'VWorld LT_C_UQ111+UQ112+UQ113+UQ141+국립공원';
-    return{zone,zoneBasis,planZones,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
+    return{landUse:lup||null,zone,zoneBasis,planZones,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
       nedLandUse,nedRoadSide,nedTerrainH,nedTerrainF,nedZoneList,
       source:`실제 (${srcParts})`,reliability:'real'};
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
@@ -5350,6 +5357,30 @@ async function getRealSoilChem(pnu){
       year:yrs.length?(yrs[0]===yrs[yrs.length-1]?yrs[0]:yrs[0]+'~'+yrs[yrs.length-1]):'',
       source:`실제 (농진청 토양검정 — 같은 법정동 농경지 ${its.length}건 평균)`,reliability:'real'};
   }catch(e){console.warn('토양검정 화학성 실패:',e.message);return null;}
+}
+
+// ════════════════════════════════════════════
+// VWorld 필지 토지이용계획 (NED getLandUseAttr) — 토지이음 '지역지구등 지정여부' 3칸과 같은 구성
+//  ① 국토계획법 지역·지구등 (UQ…)  ② 다른 법령 지역·지구등  ③ 토지이용규제 기본법 시행령 제9조④ (토지거래허가구역, Z…)
+//  토지이음처럼: 포함·저촉만 (접함은 도로 등 교통시설만)
+async function getLandUsePlan(pnu){
+  if(!pnu||pnu.length<19) return null;
+  const d=await vwJsonp(`https://api.vworld.kr/ned/data/getLandUseAttr?pnu=${pnu}&format=json&numOfRows=300&pageNo=1`,8000);
+  const f=d&&d.landUses&&d.landUses.field; if(!f||!f.length) return null;
+  const rows=[[],[],[]], add=(i,nm)=>{ if(nm&&!rows[i].includes(nm)) rows[i].push(nm); };
+  const zonesIn=[], zonesHit=[];
+  const ZONE=/(주거|상업|공업|녹지|관리|농림|자연환경보전)지역$/;
+  f.forEach(x=>{
+    const nm=(x.prposAreaDstrcCodeNm||'').trim(), code=x.prposAreaDstrcCode||'', at=String(x.cnflcAt);
+    const keep=at==='1'||at==='2'||(at==='3'&&/^UQS/.test(code));
+    if(!keep) return;
+    if(code==='UQQ600'||/^Z/.test(code)) add(2,nm);
+    else if(/^UQ/.test(code)) add(0,nm);
+    else add(1,nm);
+    if(/^UQ[A-D]/.test(code)&&ZONE.test(nm)){ (at==='1'?zonesIn:zonesHit).includes(nm)||(at==='1'?zonesIn:zonesHit).push(nm); }
+  });
+  const zones=zonesIn.length?zonesIn:zonesHit;
+  return{pnu,rows,zones,zone:zones[0]||'',addr:(f[0].ldCodeNm||'')+' '+(f[0].mnnmSlno||'')};
 }
 
 // ════════════════════════════════════════════
