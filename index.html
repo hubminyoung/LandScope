@@ -969,9 +969,9 @@ async function _doAnalysis(address, coords){
     if(realUrban&&realUrban.reliability==='real'){
       const districts=realUrban.districtNames?.length>0?` / 용도지구: ${realUrban.districtNames.join(', ')}`:'';
       const natural=realUrban.inNaturalPark?' / 자연공원 포함':'';
-      dataLog.push({category:'용도지역·지구',icon:'🏗️',api:'VWorld 국토부 LT_C_UQ111+UQ112+UQ113+NSR001',
+      dataLog.push({category:'용도지역·지구',icon:'🏗️',api:'VWorld 국토부 LT_C_UQ111+UQ112+UQ113+UQ141+WGISNPGUG',
         url:`https://api.vworld.kr/`,
-        note:'용도지역(UQ111) + 용도지구(UQ112: 문화재·최고고도·경관 등) + 개발제한구역(UQ113) + 자연공원(NSR001) 병렬 조회',
+        note:'용도지역(UQ111) + 용도지구(UQ112: 문화재·최고고도·경관 등) + 개발제한구역(UQ113) + 국토계획구역(UQ141) + 국립공원(WGISNPGUG) 병렬 조회',
         values:`용도지역: ${realUrban.zone} / 용적률 ${realUrban.fsr}% / 건폐율 ${realUrban.bcr}%${districts}${natural}${realUrban.greenbelt?' / ⚠️개발제한':''}`,
         status:'real',verifyUrl:`https://www.eum.go.kr/`,verifyLabel:'토지이음 직접 확인'});
     }else{
@@ -1243,9 +1243,9 @@ async function _doAnalysis(address, coords){
       status:envGradeReal?'real':'simulated',
       verifyUrl:'https://www.neins.go.kr/gep/cr/gis/gis01.do',verifyLabel:'국토환경성평가지도 확인'});
     dataLog.push({category:'토지피복지도',icon:'🏞️',
-      api:landcover?'환경부 토지피복도 WMS GetFeatureInfo (api.mcee.go.kr)':'미조회',
-      note:landcover?`MCEE GeoServer EGIS:lv2_2024y 레이어 포인트 조회`:'EGIS GetFeatureInfo 미연동',
-      values:landcover?`${landcover.code} ${landcover.name}`:'조회 필요',
+      api:landcover?'환경부 토지피복지도 WFS (api.mcee.go.kr, 좌표 포인트 조회)':'미조회',
+      note:landcover?`${landcover.layer} 레이어${landcover.imgDate?` · 기준 영상 ${landcover.imgDate}`:''}`:'세분류 2025·2024, 중분류 2025 모두 응답 없음',
+      values:landcover?`${landcover.code} ${landcover.path||landcover.name}`:'조회 필요',
       status:landcover?'real':'simulated',
       verifyUrl:'https://aid.mcee.go.kr/',verifyLabel:'환경공간정보서비스 확인'});
     dataLog.push({category:'겨울철새 도래현황',icon:'🦢',
@@ -3772,7 +3772,7 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- ③ 토지피복지도 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지피복지도 ──</div>
-        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.name} (코드: ${lc.code})`:osmD?osmLcFromOsm(osmD):'<span style="color:#455a64;font-size:11px">—</span>'}</span></div>
+        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.path||lc.name} (코드: ${lc.code}${lc.imgDate?` · 영상 ${lc.imgDate}`:''})`:osmD?osmLcFromOsm(osmD):'<span style="color:#455a64;font-size:11px">—</span>'}</span></div>
         ${lc?.isWater?`<div style="font-size:11px;color:#4fc3f7;padding:2px 0">💧 수계 지역 — 수질보전 및 친수공간 계획 검토</div>`:''}
         ${lc?.isEco?`<div style="font-size:11px;color:#a5d6a7;padding:2px 0">🌿 녹지/산림 — 생태계 보전 또는 녹지 활용 가능</div>`:''}
         <div class="source-row">${lc?'● 실제 (환경부 EGIS WMS)':'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
@@ -4937,12 +4937,15 @@ async function getRealUrban(c){
       return JSON.parse(txt);
     };
     const pointBase=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json&geomFilter=POINT(${c.lng.toFixed(6)}%20${c.lat.toFixed(6)})&crs=EPSG:4326&size=1&geometry=false&attribute=true`;
-    const [r1p,r1,r2,r3,r4]=await Promise.allSettled([
+    const bufBase=pointBase.replace('&size=1&','&size=5&')+'&buffer=30';
+    const [r1p,r1,r2,r3,r4,r1b,r5]=await Promise.allSettled([
       fetchVworld(pointBase+'&data=LT_C_UQ111'),   // 대상지 좌표가 속한 용도지역 (정확)
       fetchVworld(base+'&data=LT_C_UQ111'),
       fetchVworld(base+'&data=LT_C_UQ112'),
       fetchVworld(base+'&data=LT_C_UQ113'),
-      fetchVworld(base+'&data=LT_C_NSR001'),
+      fetchVworld(pointBase+'&data=LT_C_WGISNPGUG'),   // 국립공원 (예전 LT_C_NSR001 자연공원은 폐지)
+      fetchVworld(bufBase+'&data=LT_C_UQ111'),     // 좌표 반경 30m
+      fetchVworld(bufBase+'&data=LT_C_UQ141'),     // 국토계획구역 (토지거래허가구역 등)
     ]);
 
     // VWorld 결과 로그
@@ -4960,8 +4963,9 @@ async function getRealUrban(c){
     const feats=r=>(r.status==='fulfilled'&&r.value?.response?.status==='OK')?(r.value.response.result?.featureCollection?.features||[]):[];
     const named=f=>f.filter(x=>(x.properties.uname||x.properties.UQ111_UQ111NM||'').trim());
     const pf=feats(r1p), sigg=pf[0]?.properties?.sigg_name||'';
-    const bf=named(feats(r1));
-    const pick=named(pf)[0]||bf.find(x=>x.properties.sigg_name===sigg)||bf[0];
+    const nb=named(feats(r1b)), bf=named(feats(r1));
+    const pick=named(pf)[0]||nb.find(x=>x.properties.sigg_name===sigg)||nb[0]||bf.find(x=>x.properties.sigg_name===sigg)||bf[0];
+    const zoneBasis=named(pf)[0]?'좌표':nb.length?'반경 30m':bf.length?'주변 300m':'';
     if((zone==='확인필요'||!zone)&&pick){
       const f=[pick];
       if(f.length>0){
@@ -4995,10 +4999,14 @@ async function getRealUrban(c){
       const f=r4.value.response.result.featureCollection.features||[];
       if(f.length>0){
         inNaturalPark=true;
-        const pnm=f[0].properties.NSR001_NSR001NM||f[0].properties.ZONE_NM||'자연공원';
+        const pnm=(f[0].properties.park_name?f[0].properties.park_name+' 국립공원':'')||f[0].properties.NSR001_NSR001NM||f[0].properties.ZONE_NM||'국립공원';
         restr.push(pnm);
       }
     }
+
+    // ⑤ 국토계획구역 (LT_C_UQ141 — 토지거래허가구역 등)
+    const planZones=named(feats(r5)).map(x=>x.properties.uname.trim()).filter((v,i,a)=>a.indexOf(v)===i);
+    planZones.forEach(nm=>{ if(!restr.includes(nm)) restr.push(nm); });
 
     // 국토계획법 시행령 기준 FSR/BCR (법적 상한)
     const zoneRule={
@@ -5049,8 +5057,8 @@ async function getRealUrban(c){
     if(nedTerrainH&&nedTerrainH!=='평지') imp.push(`⛰️ 지형: ${nedTerrainH}${nedTerrainF?` (${nedTerrainF})`:''} — 개발비용 가산 가능`);
     if(nedLandUse&&!['대지','잡종지'].includes(nedLandUse)) imp.push(`📋 지목: ${nedLandUse} — 용도변경(형질변경) 검토 필요`);
 
-    const srcParts=nedZone?'VWorld 국가중점데이터 WFS(NED)+LT_C_UQ111~NSR001':'VWorld LT_C_UQ111+UQ112+UQ113+NSR001';
-    return{zone,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
+    const srcParts=nedZone?'VWorld 국가중점데이터 WFS(NED)+LT_C_UQ111~UQ141':'VWorld LT_C_UQ111+UQ112+UQ113+UQ141+국립공원';
+    return{zone,zoneBasis,planZones,fsr,bcr,greenbelt,inNaturalPark,restr,districtNames,implications:imp,
       nedLandUse,nedRoadSide,nedTerrainH,nedTerrainF,nedZoneList,
       source:`실제 (${srcParts})`,reliability:'real'};
   }catch(e){console.warn('브이월드 API 오류:',e);return null;}
@@ -5885,97 +5893,33 @@ async function getRealEnvGrade(c){
 // Worker /egis 경유 (CORS 우회)
 // ════════════════════════════════════════════
 async function getRealLandcover(c){
-  const d=0.003; // ~300m BBOX
-
-  // ─── ① VWorld LT_C_LNLCMPTN (토지이용현황 — 환경부 토지피복도 동일 분류체계) ────
-  if(AVAIL.vworld){
+  // 환경부 토지피복지도 (EGIS GeoServer WFS) — 좌표가 속한 폴리곤을 CQL로 조회
+  // 세분류 2025 → 세분류 2024 → 중분류 2025 순서
+  const LAYERS=['EGIS:lv3_2025y','EGIS:lv3_2024y','EGIS:lv2_2025y'];
+  const cql=encodeURIComponent(`INTERSECTS(geom,SRID=4326;POINT(${c.lng.toFixed(6)} ${c.lat.toFixed(6)}))`);
+  for(const typeName of LAYERS){
     try{
-      const bbox=`BOX(${(c.lng-d).toFixed(6)}%20${(c.lat-d).toFixed(6)},${(c.lng+d).toFixed(6)}%20${(c.lat+d).toFixed(6)})`;
-      const url=`${WORKER_URL}/vworld-data?service=data&request=GetFeature&format=json`+
-        `&geomFilter=${bbox}&crs=EPSG:4326&size=3&geometry=false&attribute=true`+
-        `&data=LT_C_LNLCMPTN`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-      const txt=await r.text();
-      console.log('🗺️ 토지이용현황(VWorld) 응답:', txt.slice(0,200));
-      const d2=JSON.parse(txt);
-      if(d2.response?.status==='OK'){
-        const features=d2.response.result?.featureCollection?.features||[];
-        if(features.length>0){
-          const p=features[0].properties||{};
-          const code=String(p.LNLC_CD||p.lnlc_cd||p.LC_TPCD||'');
-          const name=p.LNLC_NM||p.lnlc_nm||p.LC_TPNM||p.CLS_NM||'';
-          if(code||name){
-            const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지')||name.includes('산지');
-            const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호수')||name.includes('하천');
-            console.log('✅ 토지이용현황(VWorld):',code,name);
-            return{code,name,isEco:eco,isWater:water,layer:'VWorld LT_C_LNLCMPTN',
-              source:'실제 (VWorld 토지이용현황)',reliability:'real'};
-          }
-        }
-      }
-    }catch(e){console.warn('VWorld 토지이용현황 실패:',e.message);}
-  }
-
-  // ─── ② 환경부 EGIS GeoServer WFS GetFeature (api.mcee.go.kr) ──────────────────────
-  // WMS GetFeatureInfo보다 안정적 — typeName: EGIS:lv2_2024y (중분류)
-  const WFS_LAYERS=['EGIS:lv2_2024y','EGIS:lv2_2023y'];
-  for(const typeName of WFS_LAYERS){
-    try{
-      const bbox=`${c.lng-0.001},${c.lat-0.001},${c.lng+0.001},${c.lat+0.001},EPSG:4326`;
       const url=`${WORKER_URL}/egis-wfs?SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature`+
-        `&typeName=${typeName}&outputFormat=application/json`+
-        `&BBOX=${bbox}&maxFeatures=3`;
+        `&typeName=${typeName}&outputFormat=application/json&maxFeatures=1&CQL_FILTER=${cql}`;
       const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
       const text=await r.text();
-      console.log(`🗺️ EGIS WFS (${typeName}) 응답 앞 300자:`, text.slice(0,300));
-      if(!text||text.trim().startsWith('<')) { console.warn(`EGIS WFS (${typeName}): XML 오류 응답`); continue; }
-      const d2=JSON.parse(text);
-      const features=d2.features||[];
-      if(!features.length) { console.log(`EGIS WFS (${typeName}): 피처 없음`); continue; }
-      const props=features[0].properties||{};
-      console.log(`✅ EGIS WFS (${typeName}) 속성 전체:`, JSON.stringify(props));
-      const code=String(props.LNLC_CD||props.lnlc_cd||props.L2_CODE||props.CODE||props.GRIDCODE||'');
-      const name=props.LNLC_NM||props.lnlc_nm||props.L2_NM||props.CLS_NM||props.CLASSNAME||'';
-      if(!name&&!code) { console.warn('EGIS WFS: 코드/이름 필드 없음, 속성:', JSON.stringify(props).slice(0,200)); continue; }
-      const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
-      const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호수');
-      console.log(`✅ 토지피복 WFS (${typeName}):`, code, name);
-      return{code,name,isEco:eco,isWater:water,layer:typeName,
-        source:'실제 (환경부 토지피복도 api.mcee.go.kr WFS)',reliability:'real'};
+      if(!text||text.trim().startsWith('<')){ console.warn(`EGIS WFS (${typeName}): XML 응답`); continue; }
+      const f=(JSON.parse(text).features||[])[0];
+      if(!f){ console.log(`EGIS WFS (${typeName}): 피처 없음`); continue; }
+      const p=f.properties||{};
+      const code=String(p.l3_code||p.l2_code||p.l1_code||'');
+      const name=p.l3_name||p.l2_name||p.l1_name||'';
+      if(!code&&!name) continue;
+      const path=[p.l1_name,p.l2_name,p.l3_name].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(' › ');
+      const allNm=path||name;
+      const eco=/^[34]/.test(code)||/산림|수림|초지|임지|습지/.test(allNm);
+      const water=/^[57]/.test(code)||/수역|수계|하천|호소|강|해양/.test(allNm);
+      const yr=(typeName.match(/(\d{4})y/)||[])[1]||'';
+      const imgDate=p.img_date?String(p.img_date).slice(0,10):'';
+      console.log(`✅ 토지피복 (${typeName}):`,code,path,imgDate);
+      return{code,name,path,imgDate,year:yr,isEco:eco,isWater:water,layer:typeName,
+        source:`실제 (환경부 토지피복지도 ${yr}${typeName.includes('lv3')?' 세분류':' 중분류'}${imgDate?' · 영상 '+imgDate:''})`,reliability:'real'};
     }catch(e){console.warn(`EGIS WFS (${typeName}) 오류:`,e.message);}
-  }
-
-  // ─── ③ 환경부 MCEE GeoServer WMS GetFeatureInfo (api.mcee.go.kr — 구 egis.me.go.kr) ──────
-  // 레이어: EGIS:lv2_2024y (중분류, 100~700 코드), EGIS:lv3_2024y (세분류, 상세)
-  const EGIS_LAYERS=['EGIS:lv2_2024y','EGIS:lv3_2024y','EGIS:lv2_2023y'];
-  const bbox2=`${c.lng-0.0008},${c.lat-0.0008},${c.lng+0.0008},${c.lat+0.0008}`;
-  for(const layer of EGIS_LAYERS){
-    try{
-      const url=`${WORKER_URL}/egis?SERVICE=WMS&REQUEST=GetFeatureInfo&VERSION=1.1.1`+
-        `&LAYERS=${layer}&QUERY_LAYERS=${layer}`+
-        `&BBOX=${bbox2}&WIDTH=11&HEIGHT=11&X=5&Y=5&SRS=EPSG:4326`+
-        `&INFO_FORMAT=application/json`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(7000)});
-      const text=await r.text();
-      console.log(`🗺️ EGIS WMS (${layer}) 응답 앞 300자:`, text.slice(0,300));
-      if(!text||text.trim().startsWith('<')||text.includes('"exceptions"')||text.includes('ServiceException')) {
-        console.warn(`🗺️ EGIS WMS (${layer}) 응답 건너뜀 (XML/오류 응답)`);
-        continue;
-      }
-      const d2=JSON.parse(text);
-      const features=d2.features||[];
-      if(!features.length) continue;
-      const props=features[0].properties||{};
-      // MCEE GeoServer 속성명: LNLC_CD / LNLC_NM (중분류), L3_CD / L3_NM (세분류)
-      const code=String(props.LNLC_CD||props.lnlc_cd||props.L3_CD||props.L2_CODE||props.CODE||props.GRIDCODE||'');
-      const name=props.LNLC_NM||props.lnlc_nm||props.L3_NM||props.L2_NM||props.CLS_NM||props.CLASSNAME||'';
-      if(!name&&!code) continue;
-      const eco=code.startsWith('3')||name.includes('산림')||name.includes('수림')||name.includes('초지');
-      const water=code.startsWith('5')||name.includes('수계')||name.includes('강')||name.includes('호수');
-      console.log(`✅ 토지피복 MCEE GeoServer (${layer}):`,code,name,'속성:',JSON.stringify(props).slice(0,200));
-      return{code,name,isEco:eco,isWater:water,layer,
-        source:'실제 (환경부 토지피복도 api.mcee.go.kr)',reliability:'real'};
-    }catch(e){console.warn(`토지피복 ${layer} 실패:`,e.message);}
   }
   return null;
 }
