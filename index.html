@@ -71,9 +71,10 @@ body{font-family:'Noto Sans KR',sans-serif;background:#0f1923;color:#e0e6ed;heig
 .tab-content{display:block;}
 /* 결과: 사이드바 넓힘 + 8개 섹션 2열 전부 펼침 */
 .sidebar{transition:width .3s;}
-body.has-results .sidebar{width:min(820px,64vw);}
-#tab-card .tab-bar{position:sticky;top:-12px;z-index:5;}
-.tab-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;align-items:start;}
+body.has-results .sidebar{width:min(1000px,75vw);}
+#tab-card .tab-bar{display:none;}   /* 탭 없이 전부 펼침 */
+.tab-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(300px,calc(50% - 10px)),1fr));gap:10px;align-items:start;}   /* 최대 2열 */
+.tab-grid>.stype-card,.tab-grid>.reg-card,.tab-grid>.perf-card,.tab-grid>#habitat-card{margin:0;min-width:0;}
 .tab-grid .tab-content{background:#0d1b26;border-radius:8px;padding:10px;min-width:0;scroll-margin-top:52px;}
 .tab-grid .tab-content::before{content:attr(data-title);display:block;font-size:12px;font-weight:700;color:#4fc3f7;margin-bottom:8px;}
 #tab-anomaly{order:1}#tab-climate{order:2}#tab-soil{order:3}#tab-water{order:4}#tab-eco{order:5}#tab-urban{order:6}#tab-social{order:7}#tab-perf{order:8}
@@ -489,9 +490,10 @@ let APP_PASS = localStorage.getItem('ls_pass') || '';
 
 // localStorage에 저장된 비밀번호가 있으면 오버레이를 낙관적으로 숨김
 // (fetchKeysStatus 시 401 응답 받으면 다시 표시)
+// 오버레이 요소는 페이지 맨 끝에 있어서, 페이지가 다 읽힌 뒤에 숨겨야 함
 (function(){
-  const ov = document.getElementById('passOverlay');
-  if(ov && APP_PASS) ov.style.display = 'none';
+  const hide=()=>{ const ov=document.getElementById('passOverlay'); if(ov && APP_PASS) ov.style.display='none'; };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', hide); else hide();
 })();
 
 // ── 전역 fetch 인터셉터: WORKER_URL 요청에 비밀번호 헤더 자동 주입 ──
@@ -865,11 +867,12 @@ async function _doAnalysis(address, coords){
 
     // ── 속도 개선: 서로 기다릴 필요 없는 자료를 처음에 한꺼번에 요청 (각각 시간 제한, 넘기면 null) ──
     const T=(p,ms)=>Promise.race([Promise.resolve(p).catch(()=>null), new Promise(r=>setTimeout(()=>r(null),ms))]);
+    const pnuP=T(fetchPNU(coords.lat, coords.lng),10000);
     const P={
       aq:      T(getRealAirQualityOAQ(coords),10000),
-      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),8000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), T(getSgisPopulation(coords),10000)]),
+      urban:   Promise.allSettled([T(getRealUrban(coords),12000), T(getRealBusStops(coords),8000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),8000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
       mcee:    T(fetchMceeLC(coords.lat, coords.lng),10000),
-      pnu:     T(fetchPNU(coords.lat, coords.lng),10000),
+      pnu:     pnuP,
       air:     T(getRealAir(coords),10000),
       soil:    T(getRealSoilRDA(coords, address),12000),
       contam:  T(getRealSoilContamination(address),10000),
@@ -996,13 +999,12 @@ async function _doAnalysis(address, coords){
     // ── 사회/인구 ──
     const social = getSocial(coords, sgisPop);
     dataLog.push({category:'사회/인구',icon:'👥',
-      api:sgisPop?'통계청 SGIS 2020 인구총조사':'시뮬레이션 (SGIS 키 미설정)',
-      url:'https://sgis.kostat.go.kr/',
-      note:sgisPop?`통계청 SGIS 격자 기반 실측값 (2020)`:
-        'SGIS 미연동 (Worker SGIS_KEY / SGIS_SECRET 미설정)',
-      values:sgisPop?`인구밀도 ${sgisPop.popD?.toLocaleString()}명/㎢ (실측)`:`인구 데이터 미연동`,
-      status:sgisPop?'real':'simulated',
-      verifyUrl:'https://sgis.kostat.go.kr/',verifyLabel:'SGIS 바로가기'});
+      api:sgisPop?'행정안전부 법정동별 성/연령별 주민등록 인구':'조회 실패',
+      url:'https://apis.data.go.kr/1741000/stdgSexdAgePpltn',
+      note:sgisPop?`${sgisPop.dong} (${sgisPop.ym}) 주민등록 인구`:'법정동 코드(PNU)가 없거나 조회 실패',
+      values:sgisPop?`인구 ${sgisPop.pop.toLocaleString()}명 / 10대 이하 ${sgisPop.age['10대 이하']}% · 60대 이상 ${sgisPop.age['60대 이상']}%`:`인구 데이터 없음`,
+      status:sgisPop?'real':'fail',
+      verifyUrl:'https://jumin.mois.go.kr/',verifyLabel:'주민등록 인구통계'});
 
     document.getElementById('loadingStep').textContent=STEPS[7];
     const water = buildWater(coords, osm, elev, realFlood, realNoise);
@@ -2316,12 +2318,13 @@ function getTraffic(c){
 
 function getSocial(c, sgisPop){
   const progs=[];
-  if(sgisPop&&sgisPop.popD){
-    // SGIS 실 데이터 있을 때
-    const aged65Pct=sgisPop.aged65||null;
-    if(aged65Pct>20)progs.push('🪑 건강운동·휴게','♿ 무장애(BF) 설계');
-    else progs.push('🌿 다목적 복합공원','🏃 액티브 스포츠');
-    return{popD:sgisPop.popD,age:null,aged65Pct,progs,
+  if(sgisPop&&sgisPop.pop){
+    // 행안부 법정동 주민등록 인구 (밀도는 면적 자료가 없어 표시 안 함)
+    const old=sgisPop.age['60대 이상'], kid=sgisPop.age['10대 이하'];
+    if(old>22)progs.push('🪑 건강운동·휴게','♿ 무장애(BF) 설계');
+    if(kid>16)progs.push('🧒 어린이 놀이·보호자 휴게');
+    if(!progs.length)progs.push('🌿 다목적 복합공원','🏃 액티브 스포츠');
+    return{popD:null,pop:sgisPop.pop,dong:sgisPop.dong,ym:sgisPop.ym,age:sgisPop.age,aged65Pct:null,progs,
       source:sgisPop.source,reliability:'real'};
   }
   // SGIS 없음 → 인구 데이터 없으므로 프로그램 제안 보류
@@ -3690,7 +3693,7 @@ function renderResults(d){
     </div>` : ''}
 
     <!-- 🌱 식재 서식 조건 카드 ─ 흙토람 + KMA 파생 -->
-    <div class="card" style="padding:14px;">
+    <div class="card" id="habitat-card" style="padding:14px;">
       <div class="card-title" style="margin-bottom:12px;">🌱 식재 서식 조건
         <span style="font-size:10px;color:#546e7a;font-weight:400;margin-left:4px;">— 흙토람·KMA 데이터 자동 파생 · 현장측량 불필요</span>
       </div>
@@ -3976,7 +3979,8 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- 사회적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 사회 · 인구 조건 ──</div>
-        ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
+        ${soc.pop?`<div class="data-row"><span class="data-key">주민등록 인구</span><span class="data-val">${soc.pop.toLocaleString()}명 <span style="font-size:9px;color:#78909c">${soc.dong} · ${soc.ym}</span></span></div>`:''}
+        ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:soc.pop?'':`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
         ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join(''):''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 이용 프로그램 제안</div>
@@ -4035,6 +4039,12 @@ function renderResults(d){
   document.body.classList.add('has-results'); setTimeout(()=>{try{map.invalidateSize();}catch(e){}},350);
   // 탭 카드를 결과 최상단으로 이동
   const _tc=document.getElementById('tab-card'); if(_tc) rc.prepend(_tc);
+  // 입지 타입·규제·환경 기준·식재 서식 카드도 같은 2열 묶음 맨 앞으로 (한 페이지에 12개 모두)
+  const _grid=_tc&&_tc.querySelector('.tab-grid');
+  if(_grid){
+    const _first=[...rc.children].filter(el=>el.matches('.stype-card,.reg-card,.perf-card,#habitat-card'));
+    _first.reverse().forEach(el=>_grid.prepend(el));
+  }
   requestAnimationFrame(()=>{
     drawRadar(sc);
     document.querySelectorAll('.score-bar[data-w]').forEach(b=>{setTimeout(()=>{b.style.width=b.dataset.w+'%';},50);});
@@ -5602,12 +5612,32 @@ async function getRealNoise(c){
 // 실제 API: SGIS 인구통계 — sgisapi.kostat.go.kr (별도 키 필요)
 // 발급: https://sgis.kostat.go.kr/developer/html/newOpenApi/api/develop/accessToken.html
 // ════════════════════════════════════════════
+// 행정안전부 법정동별 성/연령별 주민등록 인구 (PNU 앞 10자리 = 법정동 코드)
+async function getMoisPopulation(pnu){
+  if(!pnu) return null;
+  const code=String(pnu).slice(0,10);
+  for(const back of [35,65]){   // 최근 달 자료가 아직 없으면 한 달 전
+    const d=new Date(Date.now()-back*864e5), ym=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0');
+    try{
+      const url=`${WORKER_URL}/mois/stdgSexdAgePpltn/selectStdgSexdAgePpltn?stdgCd=${code}&srchFrYm=${ym}&srchToYm=${ym}&lv=3&regSeCd=1&type=JSON&numOfRows=100&pageNo=1`;
+      const j=await (await fetch(url,{signal:AbortSignal.timeout(7000)})).json();
+      let it=j?.Response?.items?.item; if(!it) continue; if(!Array.isArray(it)) it=[it];
+      const x=it.find(i=>i.stdgCd===code); if(!x) continue;
+      const n=k=>+(x[k]||0), dec=a=>n('male'+a+'AgeNmprCnt')+n('feml'+a+'AgeNmprCnt');
+      const tot=n('totNmprCnt'); if(!tot) continue;
+      const pct=v=>Math.round(v/tot*1000)/10;
+      const age={'10대 이하':pct(dec(0)+dec(10)),'20~30대':pct(dec(20)+dec(30)),'40~50대':pct(dec(40)+dec(50)),'60대 이상':pct(dec(60)+dec(70)+dec(80)+dec(90)+dec(100))};
+      return{pop:tot,age,dong:`${x.sggNm} ${x.stdgNm}`,ym:x.statsYm,source:`행정안전부 주민등록 인구 (${x.stdgNm}, ${x.statsYm})`};
+    }catch(e){}
+  }
+  return null;
+}
 async function getSgisPopulation(c){
   if(!AVAIL.sgis) return null; // consumer_key + consumer_secret 둘 다 필요
   const W=WORKER_URL;
   try{
     // 1단계: 액세스 토큰 발급 (Worker가 키를 주입)
-    const tokenUrl=`${W}/sgis-token`;
+    const tokenUrl=`${W}/sgis/OpenAPI3/auth/authentication.json`;   // worker에 /sgis-token 경로가 없어서 늘 실패했음
     const tr=await fetch(tokenUrl,{signal:AbortSignal.timeout(8000)});
     const td=await tr.json();
     if(td.errCd!==0){console.warn('SGIS 토큰 발급 실패(errCd='+td.errCd+'):',td.errMsg);return null;}
