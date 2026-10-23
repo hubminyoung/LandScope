@@ -359,6 +359,10 @@ body.has-results .sidebar{width:min(1000px,75vw);}
 .src-url:hover{text-decoration:underline;}
 .src-note{color:#78909c;font-size:10px;margin-top:2px;}
 .src-val{color:#e0e6ed;font-weight:500;}
+  .vt{display:inline-block;font-size:9px;font-weight:600;padding:0 4px;border-radius:3px;margin-left:5px;vertical-align:1px;line-height:14px;white-space:nowrap;cursor:help}
+  .vt-r{background:rgba(129,199,132,.18);color:#81c784}
+  .vt-e{background:rgba(255,213,79,.15);color:#ffd54f}
+  .vt-s{background:rgba(144,164,174,.18);color:#90a4ae}
 </style>
 </head>
 <body>
@@ -793,6 +797,8 @@ function windTxt(d){
 }
 function scoreColor(v){return v>=80?'#4fc3f7':v>=60?'#81c784':v>=40?'#ffb74d':'#ef9a9a';}
 function badge(t,c){return`<span class="badge b-${c}">${t}</span>`;}
+// 값 출처 표시: r=실측(그 위치 값을 공공·지도 자료에서 그대로) e=추정(다른 값으로 계산·주변값·평균) s=대체값(자료 없어 기본값·임의값)
+function V(k,tip){const m={r:['실측','vt-r'],e:['추정','vt-e'],s:['대체값','vt-s']}[k];return m?`<span class="vt ${m[1]}" title="${String(tip||'').replace(/"/g,'&quot;')}">${m[0]}</span>`:'';}
 // OSM 토지이용 → 피복 분류 (EGIS 미연동 시 대체 표시)
 function osmLcFromOsm(o){
   const n=o.naturalPct||0, w=o.waterPct||0, imp=o.impervious||0, ag=o.artificialGreen||0;
@@ -983,7 +989,7 @@ async function _doAnalysis(address, coords){
     // 용도지역 머지 (VWorld 데이터로 덮어쓰기)
     if(realUrban){
       urban={...urban,
-        zone:realUrban.zone, fsr:realUrban.fsr, bcr:realUrban.bcr,
+        zone:realUrban.zone, zoneBasis:realUrban.zoneBasis, fsr:realUrban.fsr, bcr:realUrban.bcr,
         greenbelt:realUrban.greenbelt, inNaturalPark:realUrban.inNaturalPark,
         restr:realUrban.restr, districtNames:realUrban.districtNames,
         implications:[...(realUrban.implications||[]),...(urban.implications||[]).filter(i=>!realUrban.implications.some(ri=>ri===i))],
@@ -1108,12 +1114,12 @@ async function _doAnalysis(address, coords){
     const realSoil = await P.soil;
     if(realSoil){
       // V3: texture(표토토성), drainage(배수등급), depth(유효토심), geography(분포지형) 등
-      if(realSoil.texture) soil.soil_type=realSoil.texture;
-      if(realSoil.drainage) soil.drainage=realSoil.drainage;
+      if(realSoil.texture){ soil.soil_type=realSoil.texture; soil.realTexture=true; }
+      if(realSoil.drainage){ soil.drainage=realSoil.drainage; soil.realDrainage=true; }
       // 유효토심 코드 → effectiveDepth (cm 중간값)
       if(realSoil.depthCd){
         const depthNum={'01':12,'02':37,'03':75,'04':120}[realSoil.depthCd];
-        if(depthNum) soil.effectiveDepth=depthNum;
+        if(depthNum){ soil.effectiveDepth=depthNum; soil.realDepth=true; }
       }
       // V3 전용 필드 추가 저장
       soil.geography=realSoil.geography||'—';
@@ -1194,7 +1200,7 @@ async function _doAnalysis(address, coords){
         !speciesData.species.some(r=>r.name===s.name)
       )].slice(0,6);
       // 에코뱅크 습지·식생 확인 결과 ecology 보강
-      if(speciesData.hasWetlandReal) ecology.hasWetland=true;
+      if(speciesData.hasWetlandReal){ ecology.hasWetland=true; ecology.wetlandReal=true; }
       if(speciesData.vegType) ecology.vegType=speciesData.vegType;
       const srcLabel=speciesData.source.includes('에코뱅크')?'에코뱅크':
                      speciesData.source.includes('NIBR')?'NIBR':'경기도';
@@ -1223,7 +1229,7 @@ async function _doAnalysis(address, coords){
         if(ecoReal.ampltGrade) ecology.ampltGrade=ecoReal.ampltGrade;
         if(ecoReal.plntCln) ecology.plntCln=ecoReal.plntCln;
         ecology.source='실제 (OSM + 생태자연도 국립생태원)';
-        ecology.reliability='real';
+        ecology.reliability='real'; ecology.gradeReal=true;
         // 1등급이면 보전 임플리케이션 강화
         if(ecoReal.grade===1&&!ecology.implications.some(i=>i.includes('1등급'))){
           ecology.implications.unshift('🔴 생태자연도 1등급 — 원칙적 개발 불가·환경영향평가 필수');
@@ -3566,16 +3572,21 @@ function derivePlantHabitat(d){
   else               { phLabel='강알칼리'; phColor='#ef9a9a'; }
 
   // ── 데이터 신뢰도 ────────────────────────────
-  const reliability = soil?.reliability === 'real' || soil?.soilChemSource
-    ? '● 흙토람 실측' + (cs?.annualSolar ? ' · KMA 일사량 실측' : '')
-    : '⬡ 흙토람 추정' + (cs?.annualSolar ? ' · KMA 일사량 실측' : ' · KMA 미연동');
+  const reliability = '칸마다 아래 표시: 실측 · 추정 · 대체값 (표시에 마우스를 올리면 출처)';
+  // 값 출처 (실측 r / 추정 e / 대체값 s)
+  const csK = cs ? (String(cs.source||'').includes('ASOS') ? 'r' : cs.reliability==='real' ? 'e' : 's') : '';
+  const sunK = (solar!=null||sunH!=null) ? (csK||'e') : 's';
+  const wetN = (soil?.realDrainage?1:0) + (cs?.annualPrecip?1:0);
+  const moistK = wetN===2 ? (csK==='r'&&!String(dr).includes('추정') ? 'r' : 'e') : wetN===1 ? 'e' : 's';
+  const chemK = soil?.soilChemSource ? 'e' : 's';
+  const chemT = soil?.soilChemSource ? '법정동 농경지 평균 (필지값 아님)' : '자료 없음 — 임의값';
 
   return {
-    sun:   { label:sunLabel,   note:sunNote,   color:sunColor   },
-    moist: { label:moistLabel, note:moistNote, color:moistColor },
-    sub:   { label:subLabel,   note:rawType,   color:subColor   },
-    nut:   { label:nutLabel,   note:nutNote,   color:nutColor   },
-    ph:    { label:`${ph} (${phLabel})`, note:`pH ${ph}`, color:phColor },
+    sun:   { label:sunLabel,   note:sunNote,   color:sunColor,   k:sunK,   t:sunK==='s'?'일사·일조 자료 없음 — 기본값':csK==='r'?'기상청 ASOS 관측소 평균':'ERA5 재분석 격자값' },
+    moist: { label:moistLabel, note:moistNote, color:moistColor, k:moistK, t:moistK==='s'?'배수·강수 자료 없음 — 기본값':moistK==='r'?'흙토람 배수등급 + 기상청 강수':'일부 자료만 있음 또는 보정값' },
+    sub:   { label:subLabel,   note:rawType,   color:subColor,   k:soil?.realTexture?'r':'s', t:soil?.realTexture?'흙토람 필지 토양':'자료 없음 — 임의 추정' },
+    nut:   { label:nutLabel,   note:nutNote,   color:nutColor,   k:chemK, t:chemT },
+    ph:    { label:`${ph} (${phLabel})`, note:`pH ${ph}`, color:phColor, k:chemK, t:chemT },
     reliability,
   };
 }
@@ -3584,6 +3595,13 @@ function renderResults(d){
   const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,landcover:lc,winterBirds:wb,agriWeather:aw,elev,climateSummary:cs,nihHardiness:nih,osm:osmD}=d;
   const sc=an.scores;
   const ph_d = derivePlantHabitat(d); // 식재 서식 조건
+  // 값 출처 판정
+  const _osm=!!osmD, _elevR=!!(elev&&elev.reliability==='real');
+  const _csK=cs?(String(cs.source||'').includes('ASOS')?'r':cs.reliability==='real'?'e':'s'):'s';
+  const _csT=cs?(_csK==='r'?'기상청 ASOS 관측소 평균':_csK==='e'?'ERA5 재분석 격자값 (관측소 아님)':'기후자료 없음 — 임의값'):'';
+  const _zoneK=urb.zoneBasis?(urb.zoneBasis==='좌표'?'r':'e'):(urb.zone&&!['확인필요','미확인'].includes(urb.zone)?'e':'');
+  const _zoneT=urb.zoneBasis?(urb.zoneBasis==='좌표'?'VWorld 용도지역 — 대상지 좌표':`VWorld 용도지역 — 좌표 위 자료 없어 ${urb.zoneBasis} 안에서 찾은 값`):'OSM 토지이용으로 추정';
+  const _restrK=String(urb.source||'').includes('VWorld')?'r':'e';
 
 
   const scoreCards=Object.entries(sc).map(([k,v])=>`
@@ -3608,7 +3626,7 @@ function renderResults(d){
   // 실측 vs 예측 구분 표시
   const specHtml=eco.species.length?eco.species.map(s=>{
     const cls=`sp-${s.risk==='critical'?'critical':s.risk==='high'?'high':'low'}`;
-    const tag=s.simulated?`<span style="font-size:9px;color:#78909c;margin-left:3px" title="생태등급 기반 예측종 — 현장 확인 필요">추정</span>`:`<span style="font-size:9px;color:#4fc3f7;margin-left:3px">실측</span>`;
+    const tag=s.simulated?V('e','생태등급 기반 예측종 — 현장 확인 필요'):V('r','조사 자료');
     return `<span class="species-chip ${cls}">${s.icon} ${s.name} <small>(${s.status})</small>${tag}</span>`;
   }).join(''):`<span style="color:#546e7a;font-size:11px">일반종만 확인</span>`;
 
@@ -3720,7 +3738,7 @@ function renderResults(d){
     <!-- 🌱 식재 서식 조건 카드 ─ 흙토람 + KMA 파생 -->
     <div class="card" id="habitat-card" style="padding:14px;">
       <div class="card-title" style="margin-bottom:12px;">🌱 식재 서식 조건
-        <span style="font-size:10px;color:#546e7a;font-weight:400;margin-left:4px;">— 흙토람·KMA 데이터 자동 파생 · 현장측량 불필요</span>
+        <span style="font-size:10px;color:#546e7a;font-weight:400;margin-left:4px;">— 아래 토양·기후 값으로 판정 · 현장 확인 권장</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
         <!-- ① 일조 -->
@@ -3728,35 +3746,35 @@ function renderResults(d){
           <div style="font-size:18px;margin-bottom:3px;">☀️</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">일조</div>
           <div style="font-size:12px;font-weight:700;color:${ph_d.sun.color};line-height:1.3;">${ph_d.sun.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sun.note}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sun.note}${ph_d.sun.k?'<br>'+V(ph_d.sun.k,ph_d.sun.t):''}</div>
         </div>
         <!-- ② 수분요구 -->
         <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.moist.color};">
           <div style="font-size:18px;margin-bottom:3px;">💧</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">수분요구</div>
           <div style="font-size:12px;font-weight:700;color:${ph_d.moist.color};line-height:1.3;">${ph_d.moist.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.moist.note}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.moist.note}${ph_d.moist.k?'<br>'+V(ph_d.moist.k,ph_d.moist.t):''}</div>
         </div>
         <!-- ③ 바닥(토성) -->
         <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid #90a4ae;">
           <div style="font-size:18px;margin-bottom:3px;">🏔️</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">바닥(토성)</div>
           <div style="font-size:11px;font-weight:700;color:#cfd8dc;line-height:1.3;">${ph_d.sub.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sub.note}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.sub.note}${ph_d.sub.k?'<br>'+V(ph_d.sub.k,ph_d.sub.t):''}</div>
         </div>
         <!-- ④ 영양소 -->
         <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.nut.color};">
           <div style="font-size:18px;margin-bottom:3px;">🍃</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">영양소</div>
           <div style="font-size:12px;font-weight:700;color:${ph_d.nut.color};line-height:1.3;">${ph_d.nut.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.nut.note}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.nut.note}${ph_d.nut.k?'<br>'+V(ph_d.nut.k,ph_d.nut.t):''}</div>
         </div>
         <!-- ⑤ pH -->
         <div style="background:#0d1b26;border-radius:8px;padding:9px 8px;text-align:center;border-top:3px solid ${ph_d.ph.color};">
           <div style="font-size:18px;margin-bottom:3px;">⚗️</div>
           <div style="font-size:9px;color:#78909c;margin-bottom:5px;letter-spacing:.5px;text-transform:uppercase;">pH 값</div>
           <div style="font-size:11px;font-weight:700;color:${ph_d.ph.color};line-height:1.3;">${ph_d.ph.label}</div>
-          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.ph.note}</div>
+          <div style="font-size:9px;color:#546e7a;margin-top:4px;">${ph_d.ph.note}${ph_d.ph.k?'<br>'+V(ph_d.ph.k,ph_d.ph.t):''}</div>
         </div>
       </div>
       <div class="source-row" style="margin-top:10px;">${ph_d.reliability}</div>
@@ -3783,57 +3801,57 @@ function renderResults(d){
       <div class="tab-content" id="tab-eco" data-title="🌿 식생·생태">
         <!-- ① 생태자연도 상세정보 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 생태자연도 상세정보 ──</div>
-        <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val" style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span></div>
-        ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
-        ${eco.ampltGrade?`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val">${eco.ampltGrade}등급</span></div>`:`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
-        ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val" style="color:${eco.grade_color};font-weight:700">${eco.grade_text}${eco.gradeReal?V('r','국립생태원 생태자연도'):_osm?V('e','OSM 녹지·건물 비율로 추정한 등급'):V('s','자료 없음 — 임의값')}</span></div>
+        ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        ${eco.ampltGrade?`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val">${eco.ampltGrade}등급${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
         <div class="source-row">${eco.reliability==='real'?'● 실제 (국립생태원 B553084)':'⬡ '+eco.source}</div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- ② 국토환경성평가지도 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 국토환경성평가지도 ──</div>
-        <div class="data-row"><span class="data-key">국토환경성 등급</span><span class="data-val">${evg?badge(evg.label,evg.badgeColor):badge('미조회','grey')}</span></div>
+        <div class="data-row"><span class="data-key">국토환경성 등급</span><span class="data-val">${evg?badge(evg.label,evg.badgeColor):badge('미조회','grey')}${evg?.reliability==='real'?V('r','국토환경성평가지도'):V('e','생태등급·경관으로 추정')}</span></div>
         ${evg?`<div style="font-size:10px;color:#78909c;padding:2px 0 4px">${evg.note}</div>`:''}
         <div class="source-row">${evg?.reliability==='real'?'● 실제 (ECVAM WMS)':'⬡ 추정 (생태등급 기반)'}</div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- ③ 토지피복지도 (항상 표시) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지피복지도 ──</div>
-        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.path||lc.name} (코드: ${lc.code}${lc.imgDate?` · 영상 ${lc.imgDate}`:''})`:osmD?osmLcFromOsm(osmD):'<span style="color:#455a64;font-size:11px">—</span>'}</span></div>
+        <div class="data-row"><span class="data-key">토지피복 분류</span><span class="data-val">${lc?`${lc.path||lc.name} (코드: ${lc.code}${lc.imgDate?` · 영상 ${lc.imgDate}`:''})`:osmD?osmLcFromOsm(osmD):'<span style="color:#455a64;font-size:11px">—</span>'}${lc?V('r','환경부 토지피복지도 '+(lc.year||'')):_osm?V('e','OSM 토지이용으로 추정'):''}</span></div>
         ${lc?.isWater?`<div style="font-size:11px;color:#4fc3f7;padding:2px 0">💧 수계 지역 — 수질보전 및 친수공간 계획 검토</div>`:''}
         ${lc?.isEco?`<div style="font-size:11px;color:#a5d6a7;padding:2px 0">🌿 녹지/산림 — 생태계 보전 또는 녹지 활용 가능</div>`:''}
-        <div class="source-row">${lc?'● 실제 (환경부 EGIS WMS)':'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
+        <div class="source-row">${lc?`● 환경부 토지피복지도 ${lc.year||''} (${lc.layer.includes('lv3')?'세분류':'중분류'})`:'⬡ 미연동 — 지도 레이어로 확인 가능'}</div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- ④ 겨울철새 도래현황 (공인 근거 중심) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 겨울철새 도래현황 ──</div>
         ${wb?.nearby?.length ? `
-        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge(wb.probability==='높음'?'영향권 내 (5km)':wb.probability==='보통'?'영향권 내 (5~8km)':'영향권 외',wb.probability==='높음'?'red':wb.probability==='보통'?'yellow':'grey')} <span style="font-size:10px;color:#78909c">신뢰도 ${wb.confidence}%</span></span></div>
-        <div class="data-row"><span class="data-key">공간 거리</span><span class="data-val" style="font-size:11px">${wb.nearby.slice(0,2).map(s=>`${s.name} ${s.d.toLocaleString()}m`).join(' · ')}</span></div>
-        ${wb.repSpecies?.length?`<div class="data-row"><span class="data-key">센서스 주요 종</span><span class="data-val" style="font-size:11px">${wb.repSpecies.join(' · ')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge(wb.probability==='높음'?'영향권 내 (5km)':wb.probability==='보통'?'영향권 내 (5~8km)':'영향권 외',wb.probability==='높음'?'red':wb.probability==='보통'?'yellow':'grey')} <span style="font-size:10px;color:#78909c">신뢰도 ${wb.confidence}%</span>${V('e','내장 도래지 목록과의 거리로 판정')}</span></div>
+        <div class="data-row"><span class="data-key">공간 거리</span><span class="data-val" style="font-size:11px">${wb.nearby.slice(0,2).map(s=>`${s.name} ${s.d.toLocaleString()}m`).join(' · ')}${V('e','내장 도래지 좌표와의 직선거리')}</span></div>
+        ${wb.repSpecies?.length?`<div class="data-row"><span class="data-key">센서스 주요 종</span><span class="data-val" style="font-size:11px">${wb.repSpecies.join(' · ')}${V('e','내장 도래지 목록의 대표종')}</span></div>`:''}
         <div style="margin:4px 0;font-size:10px;color:#90a4ae">${wb.basis.map(b=>`<div style="padding:1px 0">📋 ${b}</div>`).join('')}</div>
         ${wb.notice.map(n=>`<div style="font-size:11px;color:#ffcc80;padding:2px 0">⚠️ ${n}</div>`).join('')}
         <div class="source-row">● ${wb.source} · 환경부 생태·자연도 작성지침 준거</div>
         ` : `
-        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge('15km 이내 주요 도래지 없음','grey')}</span></div>
+        <div class="data-row"><span class="data-key">영향권 판정</span><span class="data-val">${badge('15km 이내 주요 도래지 없음','grey')}${V('e','내장 도래지 목록 기준')}</span></div>
         <div class="source-row">⬡ ${wb?wb.source:'미분석'}</div>
         `}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- 기타 생태 정보 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 녹지 · 서식환경 ──</div>
-        <div class="data-row"><span class="data-key">수목 피복률</span><span class="data-val">${eco.treeCov}%</span></div>
-        <div class="data-row"><span class="data-key">습지 존재</span><span class="data-val">${eco.hasWetland?badge('있음','green'):badge('없음','grey')}</span></div>
-        <div class="data-row"><span class="data-key">수변 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):'없음'}</span></div>
-        ${eco.nearNodeName?`<div class="data-row"><span class="data-key">인접 생태 거점</span><span class="data-val">${eco.nearNodeName} (${eco.nearNodeDist}m)</span></div>`:''}
+        <div class="data-row"><span class="data-key">수목 피복률</span><span class="data-val">${eco.treeCov}%${_osm?V('e','OSM 수목 면적 비율로 계산'):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">습지 존재</span><span class="data-val">${eco.hasWetland?badge('있음','green'):badge('없음','grey')}${eco.wetlandReal?V('r','에코뱅크 조사자료'):_osm?V('r','OSM 지도 표기'):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">수변 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):'없음'}${_osm?V('r','OSM 지도 표기'):V('s','자료 없음')}</span></div>
+        ${eco.nearNodeName?`<div class="data-row"><span class="data-key">인접 생태 거점</span><span class="data-val">${eco.nearNodeName} (${eco.nearNodeDist}m)${V('r','OSM 지도 표기')}</span></div>`:''}
         <div class="data-row" style="flex-direction:column;align-items:flex-start;gap:6px;"><span class="data-key">서식 생물</span>${specHtml}</div>
         ${eco.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
-        ${eco.nearHan||water.floodRisk==='높음'?`<div class="data-row"><span class="data-key">상수원 보호구역</span><span class="data-val"><span style="color:#ef9a9a;font-size:11px">⚠️ 수계 인접 — 확인 필요</span></span></div>`:''}
-        ${(urb.restr&&urb.restr.length)?`<div class="data-row"><span class="data-key">법적 규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
+        ${eco.nearHan||water.floodRisk==='높음'?`<div class="data-row"><span class="data-key">상수원 보호구역</span><span class="data-val"><span style="color:#ef9a9a;font-size:11px">⚠️ 수계 인접 — 확인 필요</span>${V('e','수계 인접으로 판단 — 지정 여부는 확인 필요')}</span></div>`:''}
+        ${(urb.restr&&urb.restr.length)?`<div class="data-row"><span class="data-key">법적 규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}${V(_restrK,_restrK==='r'?'VWorld 용도지구·구역':'OSM으로 추정')}</span></div>`:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- 경관·비오톱 (생태 연속) -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 경관 · 비오톱 ──</div>
-        <div class="data-row"><span class="data-key">BAR 생태면적률</span><span class="data-val" style="color:${lsc.bar>=0.5?'#4fc3f7':lsc.bar>=0.3?'#ffb74d':'#ef9a9a'};font-weight:700">${lsc.bar}</span></div>
+        <div class="data-row"><span class="data-key">BAR 생태면적률</span><span class="data-val" style="color:${lsc.bar>=0.5?'#4fc3f7':lsc.bar>=0.3?'#ffb74d':'#ef9a9a'};font-weight:700">${lsc.bar}${_osm?V('e','OSM 토지이용으로 계산'):V('s','자료 없음 — 임의값')}</span></div>
         <div style="margin:6px 0 8px">${barHtml}</div>
-        <div class="data-row"><span class="data-key">비오톱 등급</span><span class="data-val">${badge(`${lsc.btGrade}등급`,lsc.btGrade<=2?'green':'yellow')}</span></div>
-        <div class="data-row"><span class="data-key">경관 유형</span><span class="data-val">${lsc.landType}</span></div>
-        <div class="data-row"><span class="data-key">조망 품질</span><span class="data-val">${lsc.viewQuality}점 <span style="font-size:10px;color:#78909c">(${lsc.lsGrade})${lsc.nearScenic?` · ${lsc.nearScenic.name} 인접 +${lsc.scenicBonus}점`:''}</span></span></div>
+        <div class="data-row"><span class="data-key">비오톱 등급</span><span class="data-val">${badge(`${lsc.btGrade}등급`,lsc.btGrade<=2?'green':'yellow')}${_osm?V('e','OSM 녹지 비율로 추정'):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">경관 유형</span><span class="data-val">${lsc.landType}${_osm&&(osmD.hasMajorRiver||osmD.hasNaturalWood)?V('e','OSM 하천·수림으로 판정'):V('s','판정 근거 없음 — 임의 선택')}</span></div>
+        <div class="data-row"><span class="data-key">조망 품질</span><span class="data-val">${lsc.viewQuality}점 <span style="font-size:10px;color:#78909c">(${lsc.lsGrade})${lsc.nearScenic?` · ${lsc.nearScenic.name} 인접 +${lsc.scenicBonus}점`:''}</span>${_osm?V('e','BAR·비오톱으로 계산'):V('s','자료 없음 — 임의값')}</span></div>
         ${lsc.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:2px 0">${i}</div>`).join('')}
         <div class="source-row">⬡ ${lsc.source}</div>
       </div>
@@ -3841,40 +3859,40 @@ function renderResults(d){
       <div class="tab-content" id="tab-climate" data-title="🌤️ 기후·기상">
         ${cs?`
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
-        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${cs.annualMean}°C</span></div>
-        ${cs.annualMax!=null?`<div class="data-row"><span class="data-key">연평균 최고기온</span><span class="data-val" style="color:#ef9a9a">${cs.annualMax}°C</span></div>`:''}
-        ${cs.annualMin!=null?`<div class="data-row"><span class="data-key">연평균 최저기온</span><span class="data-val" style="color:#80deea">${cs.annualMin}°C</span></div>`:''}
-        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${cs.absMin!=null?cs.absMin+'°C':'—'}</span></div>
+        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${cs.annualMean}°C${V(_csK,_csT)}</span></div>
+        ${cs.annualMax!=null?`<div class="data-row"><span class="data-key">연평균 최고기온</span><span class="data-val" style="color:#ef9a9a">${cs.annualMax}°C${V(_csK,_csT)}</span></div>`:''}
+        ${cs.annualMin!=null?`<div class="data-row"><span class="data-key">연평균 최저기온</span><span class="data-val" style="color:#80deea">${cs.annualMin}°C${V(_csK,_csT)}</span></div>`:''}
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${cs.absMin!=null?cs.absMin+'°C':'—'}${V(_csK,_csT)}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
-        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}</span></div>
+        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${hz&&String(hz.note||'').includes('USDA 정의')?V('e','극한최저기온 평균으로 계산'):V('s','위도 기준 대체값')}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지중온도 ──</div>
         ${cs.soilTemp5!=null||cs.soilTemp10!=null||cs.soilTemp20!=null?`
-        <div class="data-row"><span class="data-key">5cm</span><span class="data-val">${cs.soilTemp5!=null?cs.soilTemp5+'°C':'—'}</span></div>
-        <div class="data-row"><span class="data-key">10cm</span><span class="data-val">${cs.soilTemp10!=null?cs.soilTemp10+'°C':'—'}</span></div>
-        <div class="data-row"><span class="data-key">20cm</span><span class="data-val">${cs.soilTemp20!=null?cs.soilTemp20+'°C':'—'}</span></div>
+        <div class="data-row"><span class="data-key">5cm</span><span class="data-val">${cs.soilTemp5!=null?cs.soilTemp5+'°C':'—'}${V(_csK,_csT)}</span></div>
+        <div class="data-row"><span class="data-key">10cm</span><span class="data-val">${cs.soilTemp10!=null?cs.soilTemp10+'°C':'—'}${V(_csK,_csT)}</span></div>
+        <div class="data-row"><span class="data-key">20cm</span><span class="data-val">${cs.soilTemp20!=null?cs.soilTemp20+'°C':'—'}${V(_csK,_csT)}</span></div>
         `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">지중온도 관측 없음 (지점 미관측)</div>'}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs.annualPrecip.toLocaleString()}mm</span></div>
-        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px;text-align:right">${cs.precipNote}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs.annualPrecip.toLocaleString()}mm${V(_csK,_csT)}</span></div>
+        <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px;text-align:right">${cs.precipNote}${V(_csK,_csT)}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 이슬점 · 습도 ──</div>
         ${cs.dewPoint!=null?`
-        <div class="data-row"><span class="data-key">연평균 이슬점</span><span class="data-val">${cs.dewPoint}°C</span></div>
-        ${cs.relHumidity!=null?`<div class="data-row"><span class="data-key">연평균 상대습도</span><span class="data-val">~${cs.relHumidity}%</span></div>`:''}
+        <div class="data-row"><span class="data-key">연평균 이슬점</span><span class="data-val">${cs.dewPoint}°C${V(_csK,_csT)}</span></div>
+        ${cs.relHumidity!=null?`<div class="data-row"><span class="data-key">연평균 상대습도</span><span class="data-val">~${cs.relHumidity}%${V(_csK,_csT)}</span></div>`:''}
         `:'<div style="color:#546e7a;font-size:11px;padding:3px 0">이슬점 관측 없음</div>'}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 · 풍속 ──</div>
-        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.6;text-align:right">${cs.windSummary}</span></div>
-        ${cs.windSpeed!=null?`<div class="data-row"><span class="data-key">연평균 풍속</span><span class="data-val">${cs.windSpeed}m/s</span></div>`:''}
+        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.6;text-align:right">${cs.windSummary}${V(_csK,_csT)}</span></div>
+        ${cs.windSpeed!=null?`<div class="data-row"><span class="data-key">연평균 풍속</span><span class="data-val">${cs.windSpeed}m/s${V(_csK,_csT)}</span></div>`:''}
         ${cs.annualSunshine!=null?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 일조 ──</div>
-        <div class="data-row"><span class="data-key">연간 일조시간</span><span class="data-val">${cs.annualSunshine.toLocaleString()}시간</span></div>
-        ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%</span></div>`:''}
+        <div class="data-row"><span class="data-key">연간 일조시간</span><span class="data-val">${cs.annualSunshine.toLocaleString()}시간${V(_csK,_csT)}</span></div>
+        ${cs.sunshineRate!=null?`<div class="data-row"><span class="data-key">일조율</span><span class="data-val">${cs.sunshineRate}%${V(_csK,_csT)}</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div class="source-row">${cs.source&&cs.source.includes('ASOS')?'● 기상청 ASOS 실측':cs.reliability==='real'?'● ERA5 실측 (KMA 폴백)':'⬡ 시뮬레이션'} · ${cs.source} · 최근 3년 평균</div>
@@ -3882,21 +3900,21 @@ function renderResults(d){
           const hzTemp={'6a':'약 8°C','6b':'약 10°C','7a':'약 11.7°C','7b':'약 13°C','8a':'약 14°C','8b':'약 16°C'};
           return `
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 기온 ──</div>
-        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?(hzTemp[hz.zone]||'—'):'—')}</span></div>
+        <div class="data-row"><span class="data-key">연평균 기온</span><span class="data-val">${wx.annualAvgTemp!=null?wx.annualAvgTemp+'°C':(hz?(hzTemp[hz.zone]||'—'):'—')}${wx&&wx.annualAvgTemp!=null?V('e','단기 예보값 평균'):hz?V('s','내한성 구역표 대체값'):''}</span></div>
         <div class="data-row"><span class="data-key">연평균 최고기온</span><span class="data-val" style="color:#ef9a9a"><span style="color:#455a64;font-size:10px">—</span></span></div>
         <div class="data-row"><span class="data-key">연평균 최저기온</span><span class="data-val" style="color:#80deea"><span style="color:#455a64;font-size:10px">—</span></span></div>
-        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${hz?hz.minTemp:'—'}</span></div>
+        <div class="data-row"><span class="data-key">극한 최저기온</span><span class="data-val" style="color:#ef9a9a;font-weight:700">${hz?hz.minTemp:'—'}${hz?V('s','위도 기준 대체값'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 내한성 구역 ──</div>
-        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span></span></div>
-        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}</span></div>
+        <div class="data-row"><span class="data-key">USDA Zone</span><span class="data-val" style="color:#4fc3f7;font-weight:700">Zone ${hz?hz.zone:'—'} <span style="font-size:10px;color:#78909c;font-weight:400">${hz?'('+hz.minTemp+')':''}</span>${V('s','위도 기준 대체값')}</span></div>
+        <div class="data-row"><span class="data-key">농진청 내한성</span><span class="data-val" style="color:#81d4fa;font-weight:600">${nih?(nih.zone+'구역 <span style="font-size:10px;color:#78909c;font-weight:400">('+( nih.tempRange||'')+')' +'</span>'):'<span style="color:#546e7a;font-size:11px">— 미연동</span>'}${nih?V('r','농진청 식물내한성 지도'):''}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 강수량 ──</div>
         <div class="data-row"><span class="data-key">연강수량</span><span class="data-val"><span style="color:#546e7a">— (KMA·ERA5 조회 실패)</span></span></div>
         <div class="data-row"><span class="data-key">강수 패턴</span><span class="data-val" style="font-size:11px;color:#546e7a">—</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 풍향 ──</div>
-        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍</span></div>
+        <div class="data-row"><span class="data-key">계절 주풍향</span><span class="data-val" style="font-size:11px;line-height:1.5">봄 서풍 · 여름 남서풍<br>가을·겨울 북서풍${V('s','우리나라 일반 풍향 — 대체값')}</span></div>
         <div class="data-row"><span class="data-key">연평균 풍속</span><span class="data-val"><span style="color:#455a64;font-size:10px">—</span></span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 이슬점 · 습도 ──</div>
@@ -3909,36 +3927,36 @@ function renderResults(d){
 
       <div class="tab-content" id="tab-soil" data-title="🏔️ 지형·토양">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토양 ──</div>
-        ${soil.soilSeries?`<div class="data-row"><span class="data-key">토양통</span><span class="data-val" style="font-weight:600;color:#a5d6a7">${soil.soilSeries}</span></div>`:''}
-        <div class="data-row"><span class="data-key">토성 (토양유형)</span><span class="data-val">${soil.soil_type}</span></div>
-        <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth!=null?(soil.effectiveDepth<25?`<span style="color:#ef9a9a;font-weight:600">매우 얕음 (${soil.effectiveDepth}cm) ⚠️</span>`:soil.effectiveDepth<50?`얕음 (${soil.effectiveDepth}cm)`:`${soil.effectiveDepth}cm`):'—'}</span></div>
-        <div class="data-row"><span class="data-key">배수 (공식)</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}</span></div>
+        ${soil.soilSeries?`<div class="data-row"><span class="data-key">토양통</span><span class="data-val" style="font-weight:600;color:#a5d6a7">${soil.soilSeries}${V('r','흙토람')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">토성 (토양유형)</span><span class="data-val">${soil.soil_type}${soil.realTexture?V('r','흙토람 필지 토양'):V('s','자료 없음 — 지형으로 임의 추정')}</span></div>
+        <div class="data-row"><span class="data-key">유효토심</span><span class="data-val">${soil.effectiveDepth!=null?(soil.effectiveDepth<25?`<span style="color:#ef9a9a;font-weight:600">매우 얕음 (${soil.effectiveDepth}cm) ⚠️</span>`:soil.effectiveDepth<50?`얕음 (${soil.effectiveDepth}cm)`:`${soil.effectiveDepth}cm`):'—'}${soil.realDepth?V('r','흙토람 필지 토양'):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">배수 (공식)</span><span class="data-val">${soil.drainage==='양호'?badge(soil.drainage,'green'):soil.drainage==='보통'?badge(soil.drainage,'yellow'):badge(soil.drainage,'red')}${soil.realDrainage?(String(soil.drainage).includes('추정')?V('e','흙토람 값을 식양토·평지로 보정'):V('r','흙토람 필지 토양')):V('s','자료 없음 — 임의값')}</span></div>
         ${soil.drainageNote?`<div style="font-size:10px;color:#ffcc80;padding:2px 0 4px">⚠️ ${soil.drainageNote}</div>`:''}
-        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}<span style="font-size:10px;color:${soil.soilChemSource?'#81c784':'#546e7a'};margin-left:4px">${soil.soilChemSource?'● 실측':'⬡ 추정'}</span></span></div>
-        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}${soil.soilChemSource?'g/kg':'%'}</span></div>
-        ${soil.ap!=null?`<div class="data-row"><span class="data-key">유효인산</span><span class="data-val">${soil.ap}mg/kg</span></div>`:''}
-        <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravelPct??'—'}% ${(soil.gravelPct??0)>30?'<span style="color:#ef9a9a">⚠️ 높음</span>':''}</span></div>
-        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gwReal?soil.gwReal.level+'m EL <span style="font-size:10px;color:#81c784">● 실측</span>':soil.gw+'m <span style="font-size:10px;color:#546e7a">⬡ 추정</span>'}</span></div>
-        ${soil.gwReal?.depth!=null?`<div class="data-row"><span class="data-key">지하수 심도</span><span class="data-val">${soil.gwReal.depth}m (${soil.gwReal.wellName})</span></div>`:''}
+        <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.ph}${soil.soilChemSource?V('e','법정동 농경지 평균 (필지값 아님)'):V('s','자료 없음 — 임의값')}</span></div>
+        <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.om}${soil.soilChemSource?'g/kg':'%'}${soil.soilChemSource?V('e','법정동 농경지 평균 (필지값 아님)'):V('s','자료 없음 — 임의값')}</span></div>
+        ${soil.ap!=null?`<div class="data-row"><span class="data-key">유효인산</span><span class="data-val">${soil.ap}mg/kg${V('e','법정동 농경지 평균 (필지값 아님)')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravelPct??'—'}% ${(soil.gravelPct??0)>30?'<span style="color:#ef9a9a">⚠️ 높음</span>':''}${V('s','자료 없음 — 지형으로 임의 추정')}</span></div>
+        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${soil.gwReal?soil.gwReal.level+'m EL'+V('r','국가지하수 관측정'):soil.gw+'m'+V('s','자료 없음 — 임의값')}</span></div>
+        ${soil.gwReal?.depth!=null?`<div class="data-row"><span class="data-key">지하수 심도</span><span class="data-val">${soil.gwReal.depth}m (${soil.gwReal.wellName})${V('r','국가지하수 관측정')}</span></div>`:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지형 · 지질 ──</div>
-        <div class="data-row"><span class="data-key">해발고도 / 지형</span><span class="data-val">${elev&&elev.elevation!=null?elev.elevation+'m':'—'} · ${elev&&elev.elevation<30?'평지 (하성평탄지)':elev&&elev.elevation<100?'구릉지':'산지'}</span></div>
-        <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${soil.slope}°</span></div>
-        ${(elev&&elev.elevation<15||soil.gw<1)?`<div class="data-row"><span class="data-key">수문지질</span><span class="data-val" style="font-size:11px">충적층 — 표면 배수 불량·물 고임 가능</span></div>`:''}
-        <div class="data-row"><span class="data-key">식재 적합성</span><span class="data-val">${badge(soil.suitability,soil.ok?'green':'yellow')}</span></div>
+        <div class="data-row"><span class="data-key">해발고도 / 지형</span><span class="data-val">${elev&&elev.elevation!=null?elev.elevation+'m':'—'} · ${elev&&elev.elevation<30?'평지 (하성평탄지)':elev&&elev.elevation<100?'구릉지':'산지'}${_elevR?V('r','SRTM 30m 고도'):V('s','고도 자료 없음')}</span></div>
+        <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${soil.slope}°${_elevR?V('e','주변 5점 고도로 계산'):V('s','고도 자료 없음 — 임의값')}</span></div>
+        ${(elev&&elev.elevation<15||soil.gw<1)?`<div class="data-row"><span class="data-key">수문지질</span><span class="data-val" style="font-size:11px">충적층 — 표면 배수 불량·물 고임 가능${V('e','고도·지하수위로 판단')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">식재 적합성</span><span class="data-val">${badge(soil.suitability,soil.ok?'green':'yellow')}${(soil.realTexture||soil.soilChemSource)?V('e','토양값으로 판정'):V('s','임의 토양값으로 판정')}</span></div>
         ${(soil.paddyGrade||soil.uplandGrade||soil.forestGrade)?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 토지이용 적성 (흙토람 V3) ──</div>
-        ${soil.paddyGrade?`<div class="data-row"><span class="data-key">논 적성등급</span><span class="data-val">${badge(soil.paddyGrade,soil.paddyGrade==='1급지'||soil.paddyGrade==='2급지'?'green':soil.paddyGrade==='3급지'?'yellow':'red')}</span></div>`:''}
-        ${soil.uplandGrade?`<div class="data-row"><span class="data-key">밭 적성등급</span><span class="data-val">${badge(soil.uplandGrade,soil.uplandGrade==='1급지'||soil.uplandGrade==='2급지'?'green':soil.uplandGrade==='3급지'?'yellow':'red')}</span></div>`:''}
-        ${soil.forestGrade?`<div class="data-row"><span class="data-key">임지 적성등급</span><span class="data-val">${badge(soil.forestGrade,soil.forestGrade==='1급지'||soil.forestGrade==='2급지'?'green':soil.forestGrade==='3급지'?'yellow':'red')}</span></div>`:''}
-        ${soil.erosion&&soil.erosion!=='없음'?`<div class="data-row"><span class="data-key">침식 등급</span><span class="data-val" style="color:#ef9a9a">⚠️ ${soil.erosion}</span></div>`:''}
-        ${soil.matrix&&soil.matrix!=='—'?`<div class="data-row"><span class="data-key">모암(모재)</span><span class="data-val">${soil.matrix}</span></div>`:''}
+        ${soil.paddyGrade?`<div class="data-row"><span class="data-key">논 적성등급</span><span class="data-val">${badge(soil.paddyGrade,soil.paddyGrade==='1급지'||soil.paddyGrade==='2급지'?'green':soil.paddyGrade==='3급지'?'yellow':'red')}${V('r','흙토람 필지 토양')}</span></div>`:''}
+        ${soil.uplandGrade?`<div class="data-row"><span class="data-key">밭 적성등급</span><span class="data-val">${badge(soil.uplandGrade,soil.uplandGrade==='1급지'||soil.uplandGrade==='2급지'?'green':soil.uplandGrade==='3급지'?'yellow':'red')}${V('r','흙토람 필지 토양')}</span></div>`:''}
+        ${soil.forestGrade?`<div class="data-row"><span class="data-key">임지 적성등급</span><span class="data-val">${badge(soil.forestGrade,soil.forestGrade==='1급지'||soil.forestGrade==='2급지'?'green':soil.forestGrade==='3급지'?'yellow':'red')}${V('r','흙토람 필지 토양')}</span></div>`:''}
+        ${soil.erosion&&soil.erosion!=='없음'?`<div class="data-row"><span class="data-key">침식 등급</span><span class="data-val" style="color:#ef9a9a">⚠️ ${soil.erosion}${V('r','흙토람 필지 토양')}</span></div>`:''}
+        ${soil.matrix&&soil.matrix!=='—'?`<div class="data-row"><span class="data-key">모암(모재)</span><span class="data-val">${soil.matrix}${V('r','흙토람 필지 토양')}</span></div>`:''}
         `:''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         ${(air.pm25!=null||air.noiseReal!=null)?`<div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 소음 · 대기질 ──</div>`:''}
-        ${air.pm25!=null?`<div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}</span></div>`:''}
-        ${air.noiseReal!=null?`<div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}</span></div>`:''}
+        ${air.pm25!=null?`<div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}${V('r',air.station?('측정소 '+air.station):'대기질 측정소')}</span></div>`:''}
+        ${air.noiseReal!=null?`<div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}${V('r',air.noiseStation||'소음측정망')}</span></div>`:''}
         ${(air.pm25!=null||air.noiseReal!=null)?[...soil.implications,...air.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join(''):soil.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         ${air.reliability==='real'?`<div class="source-row">● 실시간 (${air.source}${air.station?' · '+air.station:''})</div>`:''}
         ${air.noiseReal!=null?`<div class="source-row">● 소음 실측 · ${air.noiseStation||'환경부 소음측정망'}</div>`:''}
@@ -3946,45 +3964,45 @@ function renderResults(d){
       </div>
 
       <div class="tab-content" id="tab-urban" data-title="🏗️ 인프라">
-        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
-        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}</span></div>
-        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목 (토지이용상황)</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
-        ${urb.nedRoadSide?`<div class="data-row"><span class="data-key">도로접면</span><span class="data-val">${urb.nedRoadSide==='맹지'?badge('맹지','red'):urb.nedRoadSide}</span></div>`:''}
-        ${urb.nedTerrainH?`<div class="data-row"><span class="data-key">지형높이</span><span class="data-val">${urb.nedTerrainH}${urb.nedTerrainF?` · ${urb.nedTerrainF}`:''}</span></div>`:''}
+        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}${V(_zoneK,_zoneT)}</span></div>
+        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}${urb.fsr&&urb.bcr&&_zoneK&&!urb.greenbelt?V(_zoneK,'용도지역별 법정 상한 (국토계획법 시행령) — 조례로 달라질 수 있음'):''}</span></div>
+        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목 (토지이용상황)</span><span class="data-val">${urb.nedLandUse}${V('r','국가중점데이터 토지특성')}</span></div>`:''}
+        ${urb.nedRoadSide?`<div class="data-row"><span class="data-key">도로접면</span><span class="data-val">${urb.nedRoadSide==='맹지'?badge('맹지','red'):urb.nedRoadSide}${V('r','국가중점데이터 토지특성')}</span></div>`:''}
+        ${urb.nedTerrainH?`<div class="data-row"><span class="data-key">지형높이</span><span class="data-val">${urb.nedTerrainH}${urb.nedTerrainF?` · ${urb.nedTerrainF}`:''}${V('r','국가중점데이터 토지특성')}</span></div>`:''}
 
-        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist>=9999?'<span style="color:#546e7a">3km 내 없음 (OSM 조회 기준)</span>':trf.subDist+'m ('+( trf.subName.endsWith('역')?trf.subName:trf.subName+'역')+')'}</span></div>
-        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+'개소 (반경 내 OSM)':`<span style="color:#455a64;font-size:11px">— (OSM 조회 불가)</span>`}</span></div>
-        <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}</span></div>
+        <div class="data-row"><span class="data-key">지하철 거리</span><span class="data-val">${trf.subDist>=9999?'<span style="color:#546e7a">3km 내 없음 (OSM 조회 기준)</span>':trf.subDist+'m ('+( trf.subName.endsWith('역')?trf.subName:trf.subName+'역')+')'}${_osm?V('r','OSM 역 위치 — 직선거리'):''}</span></div>
+        <div class="data-row"><span class="data-key">버스정류장</span><span class="data-val">${trf.buses!=null?trf.buses+(trf.busSource==='real_api'?'개소 (버스정보 API)':'개소 (OSM)')+V('r',trf.busSource==='real_api'?'국토부 버스정류소 정보':'OSM 지도 표기'):`<span style="color:#455a64;font-size:11px">— (OSM 조회 불가)</span>`}</span></div>
+        <div class="data-row"><span class="data-key">자전거도로</span><span class="data-val">${trf.bike?badge('있음','green'):'없음'}${_osm?V('r','OSM 지도 표기'):V('s','자료 없음')}</span></div>
         <div class="data-row"><span class="data-key">일평균 보행량</span><span class="data-val">${trf.peds!=null?`${trf.peds.toLocaleString()}명 (SGIS 생활인구 낮) — ${trf.pedLv}`:'<span style="color:#455a64;font-size:11px">— (Worker SGIS_KEY 필요)</span>'}</span></div>
-        <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}</span></div>
-        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:''}
+        <div class="data-row"><span class="data-key">도시 공원 계획</span><span class="data-val">${urb.greenPlan?badge('있음','green'):'없음'}${_osm?V('e','OSM 녹지 비율 15% 초과 여부로 판단 — 도시계획 아님'):V('s','자료 없음')}</span></div>
+        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}${V(_restrK,_restrK==='r'?'VWorld 용도지구·구역':'OSM으로 추정')}</span></div>`:''}
         ${[...urb.implications,...trf.implications].map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         ${osmD&&(osmD.namedWaterways?.length||osmD.namedParks?.length||osmD.namedHistoric?.length||osmD.namedAttractions?.length)?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 주변 환경 (OSM) ──</div>
-        ${osmD.namedWaterways?.length?`<div class="data-row"><span class="data-key">수계</span><span class="data-val" style="font-size:11px">${osmD.namedWaterways.slice(0,4).join(' · ')}</span></div>`:''}
-        ${osmD.namedParks?.length?`<div class="data-row"><span class="data-key">공원·녹지</span><span class="data-val" style="font-size:11px">${osmD.namedParks.slice(0,4).join(' · ')}</span></div>`:''}
-        ${osmD.namedHistoric?.length?`<div class="data-row"><span class="data-key">역사시설</span><span class="data-val" style="font-size:11px">${osmD.namedHistoric.slice(0,4).join(' · ')}</span></div>`:''}
-        ${osmD.namedAttractions?.length?`<div class="data-row"><span class="data-key">관광·명소</span><span class="data-val" style="font-size:11px">${osmD.namedAttractions.slice(0,4).join(' · ')}</span></div>`:''}
+        ${osmD.namedWaterways?.length?`<div class="data-row"><span class="data-key">수계</span><span class="data-val" style="font-size:11px">${osmD.namedWaterways.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
+        ${osmD.namedParks?.length?`<div class="data-row"><span class="data-key">공원·녹지</span><span class="data-val" style="font-size:11px">${osmD.namedParks.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
+        ${osmD.namedHistoric?.length?`<div class="data-row"><span class="data-key">역사시설</span><span class="data-val" style="font-size:11px">${osmD.namedHistoric.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
+        ${osmD.namedAttractions?.length?`<div class="data-row"><span class="data-key">관광·명소</span><span class="data-val" style="font-size:11px">${osmD.namedAttractions.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
         `:''}
         <div class="source-row">${urb.reliability==='real'?'● 실제 데이터':'⬡ 시뮬레이션'} · ${urb.source}</div>
       </div>
 
       <div class="tab-content" id="tab-water" data-title="🌊 수문·배수">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 우수유출 · 홍수위험 ──</div>
-        <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodRisk==='높음'?badge(water.floodRisk,'red'):water.floodRisk==='중간'?badge(water.floodRisk,'yellow'):badge(water.floodRisk,'green')}</span></div>
-        <div class="data-row"><span class="data-key">불투수율</span><span class="data-val">${water.impRatio}% ${water.impRatio>70?badge('LID 적용 권장','red'):water.impRatio>50?badge('개선 검토','yellow'):badge('양호','green')}</span></div>
+        <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodRisk==='높음'?badge(water.floodRisk,'red'):water.floodRisk==='중간'?badge(water.floodRisk,'yellow'):badge(water.floodRisk,'green')}${water.floodReliability==='real'?V('r','홍수위험지도'):_osm?V('e','하천 인접·불투수율로 판단'):V('s','자료 없음')}</span></div>
+        <div class="data-row"><span class="data-key">불투수율</span><span class="data-val">${water.impRatio}% ${water.impRatio>70?badge('LID 적용 권장','red'):water.impRatio>50?badge('개선 검토','yellow'):badge('양호','green')}${_osm?V('e','OSM 건물 면적 비율로 계산'):V('s','자료 없음 — 임의값')}</span></div>
         ${water.impRatio>50?`<div style="font-size:11px;color:#ffb74d;padding:2px 0 6px">→ 빗물정원·투수포장·옥상녹화 등 LID 기법 도입 검토</div>`:''}
-        <div class="data-row"><span class="data-key">산사태 위험</span><span class="data-val">${badge(water.landslideRisk,water.landslideRisk==='높음'?'red':water.landslideRisk==='중간'?'yellow':'green')}</span></div>
+        <div class="data-row"><span class="data-key">산사태 위험</span><span class="data-val">${badge(water.landslideRisk,water.landslideRisk==='높음'?'red':water.landslideRisk==='중간'?'yellow':'green')}${_elevR?V('e','경사도로 판단'):V('s','고도 자료 없음')}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 수계 · 수질 ──</div>
-        <div class="data-row"><span class="data-key">수계 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):water.hasSurface?badge('소하천 인접','blue'):'없음'}</span></div>
-        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">${water.wqGrade&&water.wqReliability==='real'?`Ⅰ~Ⅴ중 ${water.wqGrade}등급 <span style="font-size:10px;color:#78909c">(${water.wqText||''})</span>`:water.hasSurface?'<span style="color:#546e7a;font-size:11px">인근 하천 있음 — 수질API 미연동</span>':'<span style="color:#546e7a;font-size:11px">—</span>'}</span></div>
-        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs&&cs.annualPrecip?cs.annualPrecip.toLocaleString()+'mm <span style="font-size:10px;color:#81c784">● 실측</span>':'<span style="color:#546e7a">— (기후 탭 연동 후 표시)</span>'}</span></div>
+        <div class="data-row"><span class="data-key">수계 인접</span><span class="data-val">${eco.nearHan?badge('한강 수계 인접','blue'):water.hasSurface?badge('소하천 인접','blue'):'없음'}${_osm?V('r','OSM 지도 표기'):V('s','자료 없음')}</span></div>
+        <div class="data-row"><span class="data-key">수질 등급</span><span class="data-val">${water.wqGrade&&water.wqReliability==='real'?`Ⅰ~Ⅴ중 ${water.wqGrade}등급 <span style="font-size:10px;color:#78909c">(${water.wqText||''})</span>`:water.hasSurface?'<span style="color:#546e7a;font-size:11px">인근 하천 있음 — 수질API 미연동</span>':'<span style="color:#546e7a;font-size:11px">—</span>'}${water.wqReliability==='real'?V('r','수질 측정망'):''}</span></div>
+        <div class="data-row"><span class="data-key">연강수량</span><span class="data-val">${cs&&cs.annualPrecip?cs.annualPrecip.toLocaleString()+'mm'+V(_csK,_csT):'<span style="color:#546e7a">— (기후 탭 연동 후 표시)</span>'}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 관개 가능성 ──</div>
-        <div class="data-row"><span class="data-key">관개 필요도</span><span class="data-val">${cs&&cs.annualPrecip&&cs.annualPrecip<1000?badge('관개 필요','red'):cs&&cs.annualPrecip&&cs.annualPrecip>1200?badge('관개 보조 충분','green'):'추가 분석 필요'}</span></div>
-        <div class="data-row"><span class="data-key">우수 재활용</span><span class="data-val" style="font-size:11px">${eco.nearHan||water.hasSurface?'수계 인접 — 친수공간·우수활용 유리':'우수저류조 검토 권장'}</span></div>
+        <div class="data-row"><span class="data-key">관개 필요도</span><span class="data-val">${cs&&cs.annualPrecip&&cs.annualPrecip<1000?badge('관개 필요','red'):cs&&cs.annualPrecip&&cs.annualPrecip>1200?badge('관개 보조 충분','green'):'추가 분석 필요'}${cs&&cs.annualPrecip?V('e','연강수량으로 판단'):''}</span></div>
+        <div class="data-row"><span class="data-key">우수 재활용</span><span class="data-val" style="font-size:11px">${eco.nearHan||water.hasSurface?'수계 인접 — 친수공간·우수활용 유리':'우수저류조 검토 권장'}${V('e','수계 인접 여부로 판단')}</span></div>
         ${water.implications.map(i=>`<div style="font-size:11px;color:#b0bec5;padding:3px 0">${i}</div>`).join('')}
         <div class="source-row">${water.floodReliability==='real'?'● 홍수위험 실측 (국토부)':'⬡ 홍수위험 미연동'} · ${water.source}</div>
       </div>
@@ -3992,10 +4010,10 @@ function renderResults(d){
       <div class="tab-content" id="tab-social" data-title="⚖️ 법적·사회">
         <!-- 법적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 법적 · 규제 조건 ──</div>
-        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}</span></div>
-        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}</span></div>
-        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목</span><span class="data-val">${urb.nedLandUse}</span></div>`:''}
-        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
+        <div class="data-row"><span class="data-key">용도지역</span><span class="data-val">${badge(urb.zone,'blue')}${urb.nedZoneList&&urb.nedZoneList.length>1?` <span style="font-size:10px;color:#78909c">${urb.nedZoneList.filter(z=>z!==urb.zone).join(' · ')}</span>`:''}${V(_zoneK,_zoneT)}</span></div>
+        <div class="data-row"><span class="data-key">용적률 / 건폐율</span><span class="data-val">${(urb&&urb.greenbelt)?badge('그린벨트 — 수치 적용 불가','orange'):eco.grade===1?badge('1등급 — 수치 적용 불가','red'):(!urb.fsr||!urb.bcr||urb.zone==='미확인'||urb.zone==='확인필요')?'<span style="color:#546e7a;font-size:11px">확인 필요 (토지이음 조회)</span>':`${urb.fsr}% / ${urb.bcr}%`}${urb.fsr&&urb.bcr&&_zoneK&&!urb.greenbelt?V(_zoneK,'용도지역별 법정 상한 (국토계획법 시행령) — 조례로 달라질 수 있음'):''}</span></div>
+        ${urb.nedLandUse?`<div class="data-row"><span class="data-key">지목</span><span class="data-val">${urb.nedLandUse}${V('r','국가중점데이터 토지특성')}</span></div>`:''}
+        ${urb.restr.length?`<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val">${urb.restr.map(r=>badge(r,'red')).join(' ')}${V(_restrK,_restrK==='r'?'VWorld 용도지구·구역':'OSM으로 추정')}</span></div>`:'<div class="data-row"><span class="data-key">규제 사항</span><span class="data-val" style="color:#a5d6a7">특별규제 없음</span></div>'}
         ${reg&&reg.items&&reg.items.length?`
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 식재 기준 · 녹지 비율 ──</div>
@@ -4004,9 +4022,9 @@ function renderResults(d){
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <!-- 사회적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 사회 · 인구 조건 ──</div>
-        ${soc.pop?`<div class="data-row"><span class="data-key">주민등록 인구</span><span class="data-val">${soc.pop.toLocaleString()}명 <span style="font-size:9px;color:#78909c">${soc.dong} · ${soc.ym}</span></span></div>`:''}
+        ${soc.pop?`<div class="data-row"><span class="data-key">주민등록 인구</span><span class="data-val">${soc.pop.toLocaleString()}명 <span style="font-size:9px;color:#78909c">${soc.dong} · ${soc.ym}</span>${V('r','행안부 주민등록 인구 (법정동 전체)')}</span></div>`:''}
         ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:soc.pop?'':`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
-        ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span></span></div>`).join(''):''}
+        ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span>${V('r','행안부 주민등록 인구 (법정동 전체)')}</span></div>`).join(''):''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 이용 프로그램 제안</div>
         ${soc.reliability==='none'
