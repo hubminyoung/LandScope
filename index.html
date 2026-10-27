@@ -1073,11 +1073,11 @@ async function _doAnalysis(address, coords){
     const floodSrc=realFlood?`국토부 홍수위험지도 실측`:osm?'OSM 수계 기반 추정':'시뮬레이션';
     const noiseSrc=realNoise?`환경부 소음측정망 (${realNoise.station}, ${realNoise.dist}m)`:null;
     dataLog.push({category:'수환경/홍수',icon:'💧',
-      api:realFlood?'국토부 홍수위험지도 WFS':osm?'OSM 수계 + 추정':'시뮬레이션',
+      api:realFlood?'홍수위험지도 WMS (도시침수·국가하천·지방하천 100년)':osm?'OSM 수계 + 추정':'시뮬레이션',
       note:`홍수위험: ${floodSrc} / 수계: ${osm?`하천인접 ${osm.hasMajorRiver?'예':'아니오'}, ${osm.waterWays}개`:'미확인'}`,
       values:`홍수위험도 ${water.floodRisk} (${realFlood?'실측':'추정'}) / 불투수율 ${water.impRatio}% / 수질등급 ${water.wqGrade}등급`,
       status:realFlood?'real':osm?'partial':'simulated',
-      verifyUrl:'https://floodmap.go.kr/',verifyLabel:'홍수위험지도 확인'});
+      verifyUrl:'https://www.floodmap.go.kr/',verifyLabel:'홍수위험지도 확인'});
     if(noiseSrc){
       dataLog.push({category:'소음',icon:'🔊',api:'환경부 소음측정망',
         note:noiseSrc,
@@ -1332,7 +1332,7 @@ async function _doAnalysis(address, coords){
       else rec='다목적 도시 근린공원';
       analysis.rec=rec;
     }
-    analysisResult={heatZone,lcStats,rivers,landChar,vegSurvey,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
+    analysisResult={realFlood,heatZone,lcStats,rivers,landChar,vegSurvey,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
     renderResults(analysisResult);
   } catch(e) {
@@ -3755,7 +3755,7 @@ function renderResults(d){
   if(soil.realDepth&&soil.effectiveDepth<50) _n('🪨',`유효토심 ${soil.depthLabel||soil.effectiveDepth+'cm'}`,'흙토람 필지 토양');
   if(soil.realDrainage&&/불량/.test(soil.drainage)) _n('💧',`배수 ${soil.drainage}`,'흙토람 필지 토양');
   if(soil.realTexture&&soil.erosion&&!['없음','—'].includes(soil.erosion)) _n('⛰️',`침식 ${soil.erosion}`,'흙토람 필지 토양');
-  if(water.floodReliability==='real'&&water.floodRisk!=='낮음') _n('🌊',`홍수 위험 ${water.floodRisk}`,'홍수위험지도');
+  {const FM=d.realFlood&&d.realFlood.maps; if(FM)[['도시침수',FM.cty],['국가하천 범람',FM.ntn],['지방하천 범람',FM.rgn]].forEach(([l,m])=>{if(m&&m.in)_n('🌊',`${l} 100년 빈도 침수심 ${m.depth}`,'홍수위험지도 — 대상지 지점');});}
   if(air.pm25!=null&&air.pm25>35) _n('😷',`PM2.5 ${air.pm25}㎍/㎥`,'대기질 측정소');
   if(air.noiseReal!=null&&air.noiseReal>70) _n('🔊',`소음 ${air.noiseReal}dB`,'소음측정망');
   const NA='<span class="na">자료 없음</span>';
@@ -3896,7 +3896,8 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">지형</span><span class="data-val">${d.landChar&&d.landChar.height?`${d.landChar.height}${d.landChar.form?' · '+d.landChar.form:''}`+V('r','VWorld 필지 토지특성 '+d.landChar.year):NA}${_elevR?` · 해발 ${elev.elevation}m`+V('r','SRTM 30m 고도'):''}</span></div>
         <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${_elevR?soil.slope+'°'+V('e','주변 5점 고도로 계산'):NA}</span></div>
         <div class="data-row"><span class="data-key">산사태 위험</span><span class="data-val">${_elevR?badge(water.landslideRisk,water.landslideRisk==='높음'?'red':water.landslideRisk==='중간'?'yellow':'green')+V('e','경사도로만 판단 — 산사태위험지도 아님'):NA}</span></div>
-        <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodReliability==='real'?badge(water.floodRisk,water.floodRisk==='높음'?'red':water.floodRisk==='중간'?'yellow':'green')+V('r','홍수위험지도'):'<span class="na" title="홍수위험지도 조회가 안 돼요">자료 없음</span>'}</span></div>
+        ${(()=>{const FM=d.realFlood&&d.realFlood.maps;const row=(lab,m)=>`<div class="data-row"><span class="data-key">${lab} <span style="font-size:9px;color:#78909c">100년</span></span><span class="data-val">${m?(m.in?`<span style="color:#ef9a9a">침수심 ${m.depth}</span>`:'침수 예상 구역 아님')+V('r','홍수위험지도 '+lab+' 100년 빈도 — 대상지 지점'):'<span class="na">조회 실패</span>'}</span></div>`;
+          return FM?row('도시침수',FM.cty)+row('국가하천 범람',FM.ntn)+row('지방하천 범람',FM.rgn):'<div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val"><span class="na">조회 실패</span></span></div>';})()}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 물 ──</div>
         <div class="data-row"><span class="data-key">수계 (반경 1km)</span><span class="data-val">${RV?(RV.length?RV.map(r=>`${r.name} <span style="font-size:10px;color:#78909c">${r.cat}</span>`).join(' · '):'하천 없음')+V('r','VWorld 하천망'):NA}</span></div>
@@ -5557,32 +5558,38 @@ async function getRealBusStops(c){
 }
 
 // ════════════════════════════════════════════
-// 실제 API: 홍수위험지도 WFS — floodmap.go.kr (Worker: /floodmap-wfs 라우트 필요)
+// 실제 API: 홍수위험지도 WMS — data.floodmap.go.kr (Worker: /floodmap-wms)
+// 도시침수(adm-cty) · 국가하천 범람(adm-ntn) · 지방하천 범람(adm-rgn), 100년 빈도, 대상지 1지점
 // ════════════════════════════════════════════
+const FLOOD_SEG={N330:'0.5m 미만',N331:'0.5~1.0m',N332:'1.0~2.0m',N333:'2.0~5.0m',N334:'5.0m 이상'};
+async function _floodHit(svc,c,seg){
+  const X=c.lng*20037508.34/180, Y=Math.log(Math.tan((90+c.lat)*Math.PI/360))*20037508.34/Math.PI, d=4;
+  const u=`${WORKER_URL}/floodmap-wms/${svc}?Freq=100&Format=image/png&transparent=TRUE&srs=EPSG:3857&Bbox=${X-d},${Y-d},${X+d},${Y+d}&width=3&height=3${seg?'&SegCode='+seg:''}`;
+  const r=await fetch(u,{signal:AbortSignal.timeout(8000)});
+  if(!r.ok||!/image/.test(r.headers.get('content-type')||'')) throw new Error('flood '+r.status);
+  const bm=await createImageBitmap(await r.blob());
+  const cv=typeof OffscreenCanvas!=='undefined'?new OffscreenCanvas(3,3):Object.assign(document.createElement('canvas'),{width:3,height:3});
+  const g=cv.getContext('2d'); g.drawImage(bm,0,0);
+  return g.getImageData(1,1,1,1).data[3]>0;
+}
+async function _floodOne(svc,c){
+  try{
+    if(!(await _floodHit(svc,c))) return {in:false};
+    const segs=Object.keys(FLOOD_SEG);
+    const hits=await Promise.all(segs.map(k=>_floodHit(svc,c,k).catch(()=>false)));
+    const k=segs.filter((_,i)=>hits[i]).pop();
+    return {in:true,seg:k||null,depth:k?FLOOD_SEG[k]:'구간 미확인'};
+  }catch(e){return null;}
+}
 async function getRealFloodRisk(c){
   if(!AVAIL.flood) return null;
-  try{
-    // 홍수위험지도 WFS — 포인트 인터섹션 쿼리
-    const bbox=`${c.lng-0.005},${c.lat-0.005},${c.lng+0.005},${c.lat+0.005}`;
-    const url=`${WORKER_URL}/floodmap-wfs?SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature`+
-      `&TypeName=flood_risk_area&outputFormat=application/json`+
-      `&BBOX=${bbox}&srsName=EPSG:4326`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
-    const d=await r.json();
-    const features=d.features||[];
-    if(features.length>0){
-      // 위험 등급 속성 추출 (레이어별 속성명 상이할 수 있음)
-      const props=features[0].properties||{};
-      const riskVal=props.RISK_GRADE||props.risk_grade||props.FLOOD_RISK||'';
-      const riskMap={'1':'높음','2':'중간','3':'낮음','H':'높음','M':'중간','L':'낮음'};
-      const risk=riskMap[String(riskVal).trim()]||'중간';
-      return{floodRisk:risk,grade:riskVal,
-        source:'실제 (국토부 홍수위험지도)',reliability:'real'};
-    }
-    // 피처 없음 = 해당 위치는 홍수위험지역 아님
-    return{floodRisk:'낮음',grade:'N',
-      source:'실제 (국토부 홍수위험지도 — 위험구역 미포함)',reliability:'real'};
-  }catch(e){return null;}
+  const [cty,ntn,rgn]=await Promise.all([_floodOne('adm-cty-wms',c),_floodOne('adm-ntn-wms',c),_floodOne('adm-rgn-wms',c)]);
+  if(!cty&&!ntn&&!rgn) return null;
+  const all=[cty,ntn,rgn].filter(Boolean);
+  const deep=all.some(x=>x.in&&['N332','N333','N334'].includes(x.seg));
+  const any=all.some(x=>x.in);
+  return{maps:{cty,ntn,rgn},floodRisk:deep?'높음':any?'중간':'낮음',
+    source:'실제 (홍수위험지도 100년 빈도)',reliability:'real'};
 }
 
 // ════════════════════════════════════════════
