@@ -5561,10 +5561,11 @@ async function getRealBusStops(c){
 // 실제 API: 홍수위험지도 WMS — data.floodmap.go.kr (Worker: /floodmap-wms)
 // 도시침수(adm-cty) · 국가하천 범람(adm-ntn) · 지방하천 범람(adm-rgn), 100년 빈도, 대상지 1지점
 // ════════════════════════════════════════════
+const FLOOD_KEY='2bed7c95-7799-4cf5-bf86-b6a6b9f7e1ef'; // 홍수위험지도 — 해외(Cloudflare) 접속 차단이라 브라우저 직접 조회
 const FLOOD_SEG={N330:'0.5m 미만',N331:'0.5~1.0m',N332:'1.0~2.0m',N333:'2.0~5.0m',N334:'5.0m 이상'};
 async function _floodHit(svc,c,seg){
   const X=c.lng*20037508.34/180, Y=Math.log(Math.tan((90+c.lat)*Math.PI/360))*20037508.34/Math.PI, d=4;
-  const u=`${WORKER_URL}/floodmap-wms/${svc}?Freq=100&Format=image/png&transparent=TRUE&srs=EPSG:3857&Bbox=${X-d},${Y-d},${X+d},${Y+d}&width=3&height=3${seg?'&SegCode='+seg:''}`;
+  const u=`https://data.floodmap.go.kr/api/wms-service/${svc}?ServiceKey=${FLOOD_KEY}&Freq=100&Format=image/png&transparent=TRUE&srs=EPSG:3857&Bbox=${X-d},${Y-d},${X+d},${Y+d}&width=3&height=3${seg?'&SegCode='+seg:''}`;
   const r=await fetch(u,{signal:AbortSignal.timeout(8000)});
   if(!r.ok||!/image/.test(r.headers.get('content-type')||'')) throw new Error('flood '+r.status);
   const bm=await createImageBitmap(await r.blob());
@@ -5582,7 +5583,6 @@ async function _floodOne(svc,c){
   }catch(e){return null;}
 }
 async function getRealFloodRisk(c){
-  if(!AVAIL.flood) return null;
   const [cty,ntn,rgn]=await Promise.all([_floodOne('adm-cty-wms',c),_floodOne('adm-ntn-wms',c),_floodOne('adm-rgn-wms',c)]);
   if(!cty&&!ntn&&!rgn) return null;
   const all=[cty,ntn,rgn].filter(Boolean);
