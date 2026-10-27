@@ -1238,7 +1238,7 @@ async function _doAnalysis(address, coords){
         if(ecoReal.ampltGrade) ecology.ampltGrade=ecoReal.ampltGrade;
         if(ecoReal.plntCln) ecology.plntCln=ecoReal.plntCln;
         ecology.source='실제 (OSM + 생태자연도 국립생태원)';
-        ecology.reliability='real'; ecology.gradeReal=true;
+        ecology.gradeDong=true; ecology.ecoDongN=ecoReal.n;   // 법정동 안 생태자연도 구역들의 최빈 등급 — 대상지 등급은 아님
         // 1등급이면 보전 임플리케이션 강화
         if(ecoReal.grade===1&&!ecology.implications.some(i=>i.includes('1등급'))){
           ecology.implications.unshift('🔴 생태자연도 1등급 — 원칙적 개발 불가·환경영향평가 필수');
@@ -3934,16 +3934,16 @@ function renderResults(d){
 
       <div class="tab-content" id="tab-veg" data-title="🌳 식생">
         <div class="data-row"><span class="data-key">식생 조사</span><span class="data-val" style="font-size:11px;text-align:right">${d.vegSurvey&&d.vegSurvey.name?`${d.vegSurvey.name}${d.vegSurvey.grade?` <span style="color:#78909c">(보전등급 ${d.vegSurvey.grade})</span>`:''}`+V('r',`에코뱅크 ${d.vegSurvey.src} ${d.vegSurvey.year}`):d.vegSurvey&&d.vegSurvey.none?'<span class="na">조사 구역 밖</span>':NA}</span></div>
-        ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
-        ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급${V(eco.gradeReal?'r':'e',eco.gradeReal?'국립생태원 생태자연도':'국립생태원 생태자연도 — 같은 법정동 구역들의 값, 대상지 값 아님')}</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}${V(eco.gradeReal?'r':'e',eco.gradeReal?'국립생태원 생태자연도':'국립생태원 생태자연도 — 같은 법정동 구역들의 값, 대상지 값 아님')}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
         <div class="data-row"><span class="data-key">산림(수목) 피복</span><span class="data-val">${LC?LC.forest+'%'+V('e',`환경부 토지피복지도 산림 면적 비율 (반경 ${LC.r}m)`):NA}</span></div>
         <div class="data-row"><span class="data-key">초지 피복</span><span class="data-val">${LC?LC.grass+'%'+V('e',`환경부 토지피복지도 초지 면적 비율 (반경 ${LC.r}m) — 공원 잔디 포함`):NA}</span></div>
         <div class="source-row">국립생태원 생태자연도 · 환경부 토지피복지도</div>
       </div>
 
       <div class="tab-content" id="tab-eco" data-title="🦋 생태">
-        <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val">${eco.gradeReal?`<span style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span>`+V('r','국립생태원 생태자연도'):'<span class="na">등급 자료 없음</span>'}</span></div>
-        ${eco.ampltGrade?`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val">${eco.ampltGrade}등급${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
+        <div class="data-row"><span class="data-key">생태자연도 등급</span><span class="data-val">${eco.gradeReal||eco.gradeDong?`<span style="color:${eco.grade_color};font-weight:700">${eco.grade_text}</span>`+(eco.gradeReal?V('r','국립생태원 생태자연도'):V('e',`국립생태원 생태자연도 — 같은 법정동 구역 ${eco.ecoDongN||''}개 중 가장 많은 등급, 대상지 등급 아님`)):'<span class="na">등급 자료 없음</span>'}</span></div>
+        ${eco.ampltGrade?`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val">${eco.ampltGrade}등급${V(eco.gradeReal?'r':'e',eco.gradeReal?'국립생태원 생태자연도':'국립생태원 생태자연도 — 같은 법정동 구역들의 값, 대상지 값 아님')}</span></div>`:`<div class="data-row"><span class="data-key">동식물 평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
         ${evg?.reliability==='real'?`<div class="data-row"><span class="data-key">국토환경성 등급</span><span class="data-val">${badge(evg.label,evg.badgeColor)}${V('r','국토환경성평가지도')}</span></div>`:`<div class="data-row"><span class="data-key">국토환경성 등급</span><span class="data-val">${NA}</span></div>`}
         <div class="data-row"><span class="data-key">습지 피복</span><span class="data-val">${LC?LC.wetland+'%'+V('e',`환경부 토지피복지도 습지 면적 비율 (반경 ${LC.r}m)`):NA}${eco.wetlandReal?' · 에코뱅크 습지 확인'+V('r','에코뱅크 조사자료'):''}</span></div>
         <div class="data-row"><span class="data-key">수역 피복</span><span class="data-val">${LC?LC.water+'%'+V('e',`환경부 토지피복지도 수역 면적 비율 (반경 ${LC.r}m)`):NA}</span></div>
@@ -5108,9 +5108,9 @@ async function fetchEcoGrade(pnu){
     const text=await r.text();
     if(text.includes('Unexpected')||text.includes('SERVICE_KEY')||text.includes('DENIED')) return null;
     const d=JSON.parse(text);
-    const rc=String(d.response?.header?.resultCode||'');
+    const rc=String((d.response?.header||d.header||{}).resultCode||'');
     if(rc!=='0'&&rc!=='00') return null;
-    const raw=d.response?.body?.items?.item;
+    const raw=(d.response?.body||d.body||{}).items?.item||(d.response?.body||d.body||{}).item;
     const arr=Array.isArray(raw)?raw:raw?[raw]:[];
     if(!arr.length) return null;
     // 읍면동 내 최빈 등급 사용 (min은 읍면동 내 타 구역 1등급으로 오탐 가능)
@@ -5125,7 +5125,7 @@ async function fetchEcoGrade(pnu){
       smldGrade:parseInt(topItem.smldEvlGr)||null,
       tpgGrade:parseInt(topItem.tpgEvlGr)||null,
       plntCln:topItem.plntClnNm||'',
-      emdCd,
+      emdCd, n:arr.length,
       source:'실제 (생태자연도 · 국립생태원 B553084)',
       reliability:'real'
     };
