@@ -916,6 +916,7 @@ async function _doAnalysis(address, coords){
       lcStats: T(getLandcoverStats(coords,radius),13000),
       sgisD:   T(getSgisDensity(coords),15000),
       vegS:    T(getVegSurvey(coords),12000),
+      gwZ:     T(getGwDepthZone(coords),10000),
       lchar:   pnuP.then(pn=>T(getLandChar(pn),12000)),
       rivers:  T(getRivers(coords),9000),
       clim:    Promise.allSettled([T(getClimateSummary(coords),28000), T(getNIHHSHardiness(coords),20000)]),
@@ -1319,7 +1320,7 @@ async function _doAnalysis(address, coords){
     // absMin 있으면 시도 내 정확 구역 재매칭
     const heatZone=await P.heat;
     const lcStats=await P.lcStats, rivers=await P.rivers;
-    const sgisD=await P.sgisD, landChar=await P.lchar, vegSurvey=await P.vegS;
+    const sgisD=await P.sgisD, landChar=await P.lchar, vegSurvey=await P.vegS, gwZone=await P.gwZ;
     if(sgisD){ social.popD=sgisD.density; social.popDinfo=sgisD; }
     // 권장 공원 성격 — 실측 근거만 사용 (생태자연도는 국립생태원 등급이 있을 때만, 수변은 브이월드 하천망의 국가하천 1km 이내)
     {
@@ -1332,7 +1333,7 @@ async function _doAnalysis(address, coords){
       else rec='다목적 도시 근린공원';
       analysis.rec=rec;
     }
-    analysisResult={realFlood,heatZone,lcStats,rivers,landChar,vegSurvey,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
+    analysisResult={gwZone,realFlood,heatZone,lcStats,rivers,landChar,vegSurvey,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
     renderResults(analysisResult);
   } catch(e) {
@@ -2033,6 +2034,14 @@ async function getLandChar(pnu){
   return null;
 }
 
+// GIMS 지하수등수심선 구역 — 대상지 지점 (국가지하수정보센터 ArcGIS, 조사 지역만)
+async function getGwDepthZone(c){
+  const u=`https://www.gims.go.kr/arcgis/rest/services/jihasu/P_DEPTHTOGWMAP/MapServer/1/query?geometry=${c.lng},${c.lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=LEGEND&returnGeometry=false&f=json`;
+  const j=await fetch(u,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
+  if(j.error) throw new Error('gims');
+  const f=(j.features||[])[0];
+  return f&&f.attributes&&f.attributes.LEGEND?{zone:String(f.attributes.LEGEND).trim()}:{none:true};
+}
 // 에코뱅크 식생 조사 (자연환경조사·생태계정밀조사 식생 면) — 좌표 지점
 async function getVegSurvey(c){
   const d=0.002, q=layer=>fetch(`${WORKER_URL}/ecobank-wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=${layer}&QUERY_LAYERS=${layer}&SRS=EPSG:4326&BBOX=${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}&WIDTH=101&HEIGHT=101&X=50&Y=50&INFO_FORMAT=application/json&FEATURE_COUNT=1`,{signal:AbortSignal.timeout(10000)}).then(r=>r.json()).then(j=>(j.features||[])[0]).catch(()=>null);
@@ -3888,7 +3897,7 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">토성</span><span class="data-val">${soil.realTexture?soil.soil_type+V('r','흙토람 필지 토양'):NA}</span></div>
         <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.soilChemSource?soil.ph+_chemV:NA}</span></div>
         <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.soilChemSource?soil.om+'g/kg'+_chemV:NA}</span></div>
-        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val"><span class="na" title="국가지하수 관측 API가 폐지돼 받아올 곳이 없어요">자료 없음</span></span></div>
+        <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${d.gwZone&&d.gwZone.zone?`등수심선 ${d.gwZone.zone}m 구역`+V('e','GIMS 지하수등수심선 구역 값 — 정확한 심도 아님'):d.gwZone&&d.gwZone.none?'<span class="na">조사 지역 밖</span>':'<span class="na">조회 실패</span>'}</span></div>
         <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val"><span class="na" title="흙토람에 표토 자갈 코드가 있지만 코드 뜻 확인 전이라 표시하지 않아요">자료 없음</span></span></div>
         <div class="data-row"><span class="data-key">침식 등급</span><span class="data-val">${soil.realTexture&&soil.erosion&&soil.erosion!=='—'?soil.erosion+V('r','흙토람 필지 토양'):NA}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
