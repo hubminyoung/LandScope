@@ -1133,6 +1133,7 @@ async function _doAnalysis(address, coords){
       }
       // V3 전용 필드 추가 저장
       soil.geography=realSoil.geography||'—';
+      soil.gravel=realSoil.gravel||null;
       soil.accumulation=realSoil.accumulation||'—';
       soil.matrix=realSoil.matrix||'—';
       soil.mainLanduse=realSoil.mainLanduse||'—';
@@ -3898,7 +3899,7 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">pH</span><span class="data-val">${soil.soilChemSource?soil.ph+_chemV:NA}</span></div>
         <div class="data-row"><span class="data-key">유기물</span><span class="data-val">${soil.soilChemSource?soil.om+'g/kg'+_chemV:NA}</span></div>
         <div class="data-row"><span class="data-key">지하수위</span><span class="data-val">${d.gwZone&&d.gwZone.zone?`등수심선 ${d.gwZone.zone}m 구역`+V('e','GIMS 지하수등수심선 구역 값 — 정확한 심도 아님'):d.gwZone&&d.gwZone.none?'<span class="na">조사 지역 밖</span>':'<span class="na">조회 실패</span>'}</span></div>
-        <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val"><span class="na" title="흙토람에 표토 자갈 코드가 있지만 코드 뜻 확인 전이라 표시하지 않아요">자료 없음</span></span></div>
+        <div class="data-row"><span class="data-key">자갈함량</span><span class="data-val">${soil.gravel?soil.gravel+V('r','흙토람 필지 토양 (표토 자갈함량)'):NA}</span></div>
         <div class="data-row"><span class="data-key">침식 등급</span><span class="data-val">${soil.realTexture&&soil.erosion&&soil.erosion!=='—'?soil.erosion+V('r','흙토람 필지 토양'):NA}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지형 ──</div>
@@ -5199,6 +5200,7 @@ async function getRealSoilRDA(coords, address){
             texture:texture, geography:geo, accumulation:accum,
             matrix:matrix, mainLanduse:land,
             paddyGrade, uplandGrade, forestGrade, erosion,
+            gravel:{'01':'자갈 없음','02':'자갈 있음','03':'잔자갈 있음','04':'잔돌 있음','05':'돌 있음','06':'돌·둥근바위 있음','07':'둥근바위 있음','08':'바위 있음','09':'바위 많음'}[g('Sur_Ston_Cd')]||null,
             pnu:pnu,
             source:'실제 (흙토람 V3 · PNU 기반)', reliability:'real'
           };
