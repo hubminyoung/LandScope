@@ -904,7 +904,7 @@ async function _doAnalysis(address, coords){
     const pnuP=T(fetchPNU(coords.lat, coords.lng),10000);
     const P={
       aq:      T(getRealAirQualityOAQ(coords),10000),
-      urban:   Promise.allSettled([T(getRealUrban(coords,pnuP.then(pn=>T(getLandUsePlan(pn),9000))),14000), T(getRealBusStops(coords),10000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),12000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
+      urban:   Promise.allSettled([T(getRealUrban(coords,pnuP.then(pn=>T(getLandUsePlan(pn),9000))),14000), T(getRealBusStops(coords),10000), T(getRealFloodRisk(coords),10000), T(getRealNoise(coords),10000), pnuP.then(pn=>T(getMoisPopulation(pn),20000))]),   // 인구: 행안부 법정동 주민등록 (SGIS 대신)
       mcee:    T(fetchMceeLC(coords.lat, coords.lng),10000),
       pnu:     pnuP,
       air:     T(getRealAir(coords),10000),
@@ -914,6 +914,9 @@ async function _doAnalysis(address, coords){
       env:     Promise.allSettled([T(getRealEnvGrade(coords),10000), T(getRealLandcover(coords),10000), T(getRealAgriWeather(coords, address),10000)]),
       heat:    T(getHeatZone(coords),13000),
       lcStats: T(getLandcoverStats(coords,radius),13000),
+      sgisD:   T(getSgisDensity(coords),15000),
+      vegS:    T(getVegSurvey(coords),12000),
+      lchar:   pnuP.then(pn=>T(getLandChar(pn),12000)),
       rivers:  T(getRivers(coords),9000),
       clim:    Promise.allSettled([T(getClimateSummary(coords),28000), T(getNIHHSHardiness(coords),20000)]),
     };
@@ -1316,7 +1319,20 @@ async function _doAnalysis(address, coords){
     // absMin 있으면 시도 내 정확 구역 재매칭
     const heatZone=await P.heat;
     const lcStats=await P.lcStats, rivers=await P.rivers;
-    analysisResult={heatZone,lcStats,rivers,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
+    const sgisD=await P.sgisD, landChar=await P.lchar, vegSurvey=await P.vegS;
+    if(sgisD){ social.popD=sgisD.density; social.popDinfo=sgisD; }
+    // 권장 공원 성격 — 실측 근거만 사용 (생태자연도는 국립생태원 등급이 있을 때만, 수변은 브이월드 하천망의 국가하천 1km 이내)
+    {
+      let rec;
+      if(ecology.gradeReal&&ecology.grade<=2) rec='생태 보전형 자연공원';
+      else if(rivers&&rivers.some(r=>/국가하천/.test(r.cat))) rec='수변 생태공원';
+      else if(soil.realDrainage&&['불량','매우불량'].includes(soil.drainage)) rec='습지형 생태공원';
+      else if(social.age&&social.age['60대 이상']>22) rec='실버 친화형 근린공원';
+      else if(social.age&&social.age['10대 이하']>16) rec='가족 복합형 근린공원';
+      else rec='다목적 도시 근린공원';
+      analysis.rec=rec;
+    }
+    analysisResult={heatZone,lcStats,rivers,landChar,vegSurvey,address,radius,preset,coords,weather,ecology,soil,air,urban,traffic,social,water,landscape,analysis,performance,designCond,siteType,regulation,spatialStrat,dbTags,osm,elev,hardiness,envGrade,landcover,winterBirds,agriWeather,climateSummary,nihHardiness};
     updateMap(analysisResult);
     renderResults(analysisResult);
   } catch(e) {
@@ -1980,6 +1996,52 @@ async function getKMAClimateSummary(c){
 
 // 기후 자동분석 (KMA Hub 우선 → Open-Meteo ERA5 폴백)
 // ════════════════════════════════════════════
+// WGS84 → UTM-K(EPSG:5179) 좌표 변환 (SGIS용, GRS80 횡메르카토르)
+function toUTMK(lat,lng){
+  const a=6378137, f=1/298.257222101, k0=0.9996, lat0=38*Math.PI/180, lon0=127.5*Math.PI/180, FE=1000000, FN=2000000;
+  const e2=2*f-f*f, ep2=e2/(1-e2), p=lat*Math.PI/180, l=lng*Math.PI/180;
+  const M=ph=>a*((1-e2/4-3*e2*e2/64-5*e2**3/256)*ph-(3*e2/8+3*e2*e2/32+45*e2**3/1024)*Math.sin(2*ph)+(15*e2*e2/256+45*e2**3/1024)*Math.sin(4*ph)-(35*e2**3/3072)*Math.sin(6*ph));
+  const N=a/Math.sqrt(1-e2*Math.sin(p)**2), T=Math.tan(p)**2, Cc=ep2*Math.cos(p)**2, A=(l-lon0)*Math.cos(p);
+  const x=FE+k0*N*(A+(1-T+Cc)*A**3/6+(5-18*T+T*T+72*Cc-58*ep2)*A**5/120);
+  const y=FN+k0*(M(p)-M(lat0)+N*Math.tan(p)*(A*A/2+(5-T+9*Cc+4*Cc*Cc)*A**4/24+(61-58*T+T*T+600*Cc-330*ep2)*A**6/720));
+  return[x,y];
+}
+// SGIS(통계청) 행정동 인구밀도 — 인구총조사
+async function getSgisDensity(c){
+  const g=u=>fetch(`${WORKER_URL}/sgis${u}`,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
+  const tok=(await g('/OpenAPI3/auth/authentication.json')).result.accessToken;
+  const [x,y]=toUTMK(c.lat,c.lng);
+  const rg=await g(`/OpenAPI3/addr/rgeocode.json?accessToken=${tok}&x_coor=${x.toFixed(1)}&y_coor=${y.toFixed(1)}&addr_type=21`);
+  const r0=rg.result&&rg.result[0]; if(!r0) return null;
+  const adm=r0.adm_dr_cd||((r0.sido_cd||'')+(r0.sgg_cd||'')+(r0.emdong_cd||''));
+  for(const yr of [new Date().getFullYear()-2,new Date().getFullYear()-3,new Date().getFullYear()-4]){
+    const st=await g(`/OpenAPI3/stats/population.json?accessToken=${tok}&year=${yr}&adm_cd=${adm}&low_search=0`);
+    const it=st.result&&st.result[0];
+    if(it&&it.ppltn_dnsty) return{density:Math.round(+it.ppltn_dnsty),pop:+it.tot_ppltn||null,admNm:it.adm_nm||r0.adm_dr_nm||'',year:yr};
+  }
+  return null;
+}
+// VWorld 필지 토지특성 — 지형높이·지형형상·지목
+async function getLandChar(pnu){
+  if(!pnu||pnu.length<19) return null;
+  const y=new Date().getFullYear();
+  for(const yr of [y,y-1,y-2]){
+    const d=await vwJsonp(`https://api.vworld.kr/ned/data/getLandCharacteristics?pnu=${pnu}&stdrYear=${yr}&format=json&numOfRows=1&pageNo=1`,8000).catch(()=>null);
+    const it=d&&d.landCharacteristicss&&d.landCharacteristicss.field&&d.landCharacteristicss.field[0];
+    if(it) return{height:it.tpgrphHgCodeNm||'',form:it.tpgrphFrmCodeNm||'',jimok:it.lndcgrCodeNm||'',use:it.ladUseSittnNm||'',road:it.roadSideCodeNm||'',area:+it.lndpclAr||null,year:it.stdrYear||yr};
+  }
+  return null;
+}
+
+// 에코뱅크 식생 조사 (자연환경조사·생태계정밀조사 식생 면) — 좌표 지점
+async function getVegSurvey(c){
+  const d=0.002, q=layer=>fetch(`${WORKER_URL}/ecobank-wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=${layer}&QUERY_LAYERS=${layer}&SRS=EPSG:4326&BBOX=${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}&WIDTH=101&HEIGHT=101&X=50&Y=50&INFO_FORMAT=application/json&FEATURE_COUNT=1`,{signal:AbortSignal.timeout(10000)}).then(r=>r.json()).then(j=>(j.features||[])[0]).catch(()=>null);
+  const [a,b]=await Promise.all([q('mv_map_ntee_vtn_pyn'),q('mv_map_ecpe_vtn_pyn')]);
+  const f=a||b; if(!f) return {none:true};
+  const p=f.properties||{};
+  return{name:p.plnt_cln_nm||'',grade:p.presv_grad||'',year:p.examin_year||'',src:a?'자연환경조사':'생태계정밀조사'};
+}
+
 // AHS Heat Zone — 일 최고기온 30°C 초과 일수 (최근 3년 평균, ERA5 재분석 · Open-Meteo)
 async function getHeatZone(c){
   const y=new Date().getFullYear()-1, y0=y-2;
@@ -3491,7 +3553,7 @@ function updateMap(d){
 
   curBuf=L.circle([lat,lng],{radius:r,color:'#4fc3f7',fillColor:'#4fc3f7',fillOpacity:.07,weight:2,dashArray:'6,4'}).addTo(map);
   curMarker=L.marker([lat,lng],{icon:markerIcon}).addTo(map)
-    .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:160px;"><b style="color:#0288d1">📍 분석 지점</b><br><small>${d.coords.name}</small><br><br><b>종합 점수: ${d.analysis.overall}점</b><br><small>권장: ${d.analysis.rec}</small></div>`)
+    .bindPopup(`<div style="font-family:'Noto Sans KR',sans-serif;min-width:160px;"><b style="color:#0288d1">📍 분석 지점</b><br><small>${d.coords.name}</small><br><br><small>권장: ${d.analysis.rec}</small></div>`)
     .openPopup();
 
   // ── 대중교통 마커 (OSM 실데이터) ──────────────
@@ -3678,9 +3740,16 @@ function renderResults(d){
 
   // 종합 — 실측 자료에서 확인된 사항만 (추정·대체값은 넣지 않음)
   const _notes=[];
-  const _n=(icon,text,tip)=>_notes.push(`<div class="anomaly-item sev-info"><span style="font-size:16px;flex-shrink:0">${icon}</span><span>${text}${V('r',tip)}</span></div>`);
+  const _n=(icon,text,tip,k='r')=>_notes.push(`<div class="anomaly-item sev-info"><span style="font-size:16px;flex-shrink:0">${icon}</span><span>${text}${V(k,tip)}</span></div>`);
   if(urb.zoneBasis==='필지'||urb.zoneBasis==='좌표') _n('📌',`용도지역: ${urb.zone}`,'VWorld 토지이용계획');
-  if(urb.landUse){ urb.landUse.rows[1].forEach(x=>_n('⚖️',x,'토지이용계획 — 다른 법령 지역·지구')); urb.landUse.rows[2].forEach(x=>_n('⚖️',x,'토지이용계획 — 시행령 제9조④')); }
+  // 특수 규제만 (대부분 필지에 붙는 교육환경·과밀억제·대공방어·가축사육·토지거래허가 등은 법적·사회 카드에서만)
+  const SPECIAL=/개발제한|하천구역|소하천|자연공원|국립공원|도립공원|군립공원|도시자연공원|문화유산|문화재|역사문화환경|비오톱|상수원|수변구역|습지보호|생태.?경관|야생생물|보전산지|공익용산지|산림보호|백두대간|특별대책|홍수관리|재해위험|붕괴위험|산사태/;
+  if(urb.landUse){ [...urb.landUse.rows[0],...urb.landUse.rows[1],...urb.landUse.rows[2]].filter((x,i,a)=>SPECIAL.test(x)&&a.indexOf(x)===i).forEach(x=>_n('⚖️',x,'VWorld 토지이용계획')); }
+  else if(urb.greenbelt) _n('⚖️','개발제한구역','VWorld 용도구역');
+  // 기후 — 평균보다 극한값·계절 패턴 우선
+  if(cs&&cs.absMin!=null) _n('❄️',`극한 최저기온 ${cs.absMin}°C${cs.extMinAvg!=null?` (연 최저 평균 ${cs.extMinAvg}°C · ${cs.extYears||3}년)`:''}`,_csT,_csK);
+  if(cs&&cs.precipNote) _n('🌧️',`강수 집중: ${cs.precipNote}`,_csT,_csK);
+  if(d.heatZone) _notes.push(`<div class="anomaly-item sev-info"><span style="font-size:16px;flex-shrink:0">🔥</span><span>고온일수: 30°C 넘는 날 연 ${d.heatZone.days}일 (${d.heatZone.period})${V('e','ERA5 재분석 일 최고기온 — 도심 열섬은 덜 반영돼 실제보다 적게 나올 수 있음')}</span></div>`);
   if(eco.gradeReal&&eco.grade<=2) _n('🌿',`생태자연도 ${eco.grade}등급`,'국립생태원 생태자연도');
   eco.species.filter(x=>!x.simulated&&['critical','high'].includes(x.risk)).forEach(x=>_n(x.icon,`${x.name} 서식 확인 (${x.status})`,'조사 자료'));
   if(soil.realDepth&&soil.effectiveDepth<50) _n('🪨',`유효토심 ${soil.depthLabel||soil.effectiveDepth+'cm'}`,'흙토람 필지 토양');
@@ -3824,7 +3893,7 @@ function renderResults(d){
         <div class="data-row"><span class="data-key">침식 등급</span><span class="data-val">${soil.realTexture&&soil.erosion&&soil.erosion!=='—'?soil.erosion+V('r','흙토람 필지 토양'):NA}</span></div>
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 지형 ──</div>
-        <div class="data-row"><span class="data-key">지형</span><span class="data-val">${soil.realTexture&&soil.geography&&soil.geography!=='—'?soil.geography+V('r','흙토람 분포지형 (토양조사 기준)'):NA}${_elevR?` · 해발 ${elev.elevation}m`+V('r','SRTM 30m 고도'):''}</span></div>
+        <div class="data-row"><span class="data-key">지형</span><span class="data-val">${d.landChar&&d.landChar.height?`${d.landChar.height}${d.landChar.form?' · '+d.landChar.form:''}`+V('r','VWorld 필지 토지특성 '+d.landChar.year):NA}${_elevR?` · 해발 ${elev.elevation}m`+V('r','SRTM 30m 고도'):''}</span></div>
         <div class="data-row"><span class="data-key">경사도</span><span class="data-val">${_elevR?soil.slope+'°'+V('e','주변 5점 고도로 계산'):NA}</span></div>
         <div class="data-row"><span class="data-key">산사태 위험</span><span class="data-val">${_elevR?badge(water.landslideRisk,water.landslideRisk==='높음'?'red':water.landslideRisk==='중간'?'yellow':'green')+V('e','경사도로만 판단 — 산사태위험지도 아님'):NA}</span></div>
         <div class="data-row"><span class="data-key">홍수 위험도</span><span class="data-val">${water.floodReliability==='real'?badge(water.floodRisk,water.floodRisk==='높음'?'red':water.floodRisk==='중간'?'yellow':'green')+V('r','홍수위험지도'):'<span class="na" title="홍수위험지도 조회가 안 돼요">자료 없음</span>'}</span></div>
@@ -3857,10 +3926,14 @@ function renderResults(d){
         ${osmD.namedHistoric?.length?`<div class="data-row"><span class="data-key">역사시설</span><span class="data-val" style="font-size:11px">${osmD.namedHistoric.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
         ${osmD.namedAttractions?.length?`<div class="data-row"><span class="data-key">관광·명소</span><span class="data-val" style="font-size:11px">${osmD.namedAttractions.slice(0,4).join(' · ')}${V('r','OSM 지도 표기')}</span></div>`:''}
         `:''}
+        ${(air.pm25!=null||air.noiseReal!=null)?`<hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0"><div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 대기질 · 소음 ──</div>`:''}
+        ${air.pm25!=null?`<div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}${V('r',air.station?('측정소 '+air.station):'대기질 측정소')}</span></div>`:''}
+        ${air.noiseReal!=null?`<div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}${V('r',air.noiseStation||'소음측정망')}</span></div>`:''}
         <div class="source-row">${urb.reliability==='real'?'● 실제 데이터':'⬡ 시뮬레이션'} · ${urb.source}</div>
       </div>
 
       <div class="tab-content" id="tab-veg" data-title="🌳 식생">
+        <div class="data-row"><span class="data-key">식생 조사</span><span class="data-val" style="font-size:11px;text-align:right">${d.vegSurvey&&d.vegSurvey.name?`${d.vegSurvey.name}${d.vegSurvey.grade?` <span style="color:#78909c">(보전등급 ${d.vegSurvey.grade})</span>`:''}`+V('r',`에코뱅크 ${d.vegSurvey.src} ${d.vegSurvey.year}`):d.vegSurvey&&d.vegSurvey.none?'<span class="na">조사 구역 밖</span>':NA}</span></div>
         ${eco.vtnGrade?`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val">${eco.vtnGrade}등급${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식생평가 등급</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
         ${eco.plntCln?`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="font-size:11px">${eco.plntCln}${V('r','국립생태원 생태자연도')}</span></div>`:`<div class="data-row"><span class="data-key">식물군락</span><span class="data-val" style="color:#546e7a;font-size:11px">DB 미보유 (현장 조사 필요)</span></div>`}
         <div class="data-row"><span class="data-key">산림(수목) 피복</span><span class="data-val">${LC?LC.forest+'%'+V('e',`환경부 토지피복지도 산림 면적 비율 (반경 ${LC.r}m)`):NA}</span></div>
@@ -3930,7 +4003,8 @@ function renderResults(d){
         <!-- 사회적 조건 -->
         <div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 사회 · 인구 조건 ──</div>
         ${soc.pop?`<div class="data-row"><span class="data-key">주민등록 인구</span><span class="data-val">${soc.pop.toLocaleString()}명 <span style="font-size:9px;color:#78909c">${soc.dong} · ${soc.ym}</span>${V('r','행안부 주민등록 인구 (법정동 전체)')}</span></div>`:''}
-        ${soc.popD!=null?`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD.toLocaleString()}명/㎢</span></div>`:soc.pop?'':`<div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${badge('SGIS 미연동','grey')} <a href="https://sgis.kostat.go.kr/developer" target="_blank" style="color:#4fc3f7;font-size:10px;">키 발급</a></span></div>`}
+        ${soc.pop?'':`<div class="data-row"><span class="data-key">주민등록 인구</span><span class="data-val"><span class="na">조회 실패 — 다시 분석해 주세요</span></span></div>`}
+        <div class="data-row"><span class="data-key">인구 밀도</span><span class="data-val">${soc.popD!=null?`${soc.popD.toLocaleString()}명/㎢ <span style="font-size:9px;color:#78909c">${soc.popDinfo?soc.popDinfo.admNm+' · '+soc.popDinfo.year:''}</span>${V('r','통계청 SGIS 인구총조사 (행정동)')}`:'<span class="na">조회 실패</span>'}</span></div>
         ${soc.age?Object.entries(soc.age).map(([k,v])=>`<div class="data-row"><span class="data-key">${k}</span><span class="data-val">${v}% <span style="display:inline-block;width:${v*1.2}px;height:5px;background:#0288d1;border-radius:2px;vertical-align:middle;margin-left:4px"></span>${V('r','행안부 주민등록 인구 (법정동 전체)')}</span></div>`).join(''):''}
         <hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0">
         <div style="font-size:11px;color:#78909c;margin-bottom:6px">💡 이용 프로그램 제안</div>
