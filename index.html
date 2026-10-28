@@ -812,17 +812,21 @@ async function geocodeWorld(q){
   }catch(e){ console.warn('Nominatim 해외 검색 실패:',e.message); return null; }
 }
 // SoilGrids 2.0 (ISRIC, 250m 격자) — 표토 0~15cm의 pH·유기물·토성 추정값
+// REST API(rest.isric.org)는 ISRIC가 일시 중단 중 → 지도 서비스(WMS GetFeatureInfo)로 점 값을 읽음
 async function getSoilGrids(c){
+  const d=0.0005, bbox=`${c.lng-d},${c.lat-d},${c.lng+d},${c.lat+d}`;
+  const one=async(prop,depth)=>{
+    const L=`${prop}_${depth}_mean`;
+    const u=`https://maps.isric.org/mapserv?map=/map/${prop}.map&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo&LAYERS=${L}&QUERY_LAYERS=${L}&STYLES=&SRS=EPSG:4326&BBOX=${bbox}&WIDTH=3&HEIGHT=3&X=1&Y=1&INFO_FORMAT=text/html`;
+    try{ const t=await fetch(u,{signal:AbortSignal.timeout(12000)}).then(r=>r.text());
+      const m=t.match(/id="value">\s*(-?[\d.]+)\s*</); return m?parseFloat(m[1])/10:null;   // 단위: pH×10, dg/kg, g/kg → ÷10
+    }catch(e){ return null; }
+  };
   const props=['phh2o','soc','clay','sand','silt'];
-  const url=`https://rest.isric.org/soilgrids/v2.0/properties/query?lon=${c.lng.toFixed(5)}&lat=${c.lat.toFixed(5)}&${props.map(p=>'property='+p).join('&')}&depth=0-5cm&depth=5-15cm&value=mean`;
-  const j=await fetch(url,{signal:AbortSignal.timeout(14000)}).then(r=>r.json());
+  const vals=await Promise.all(props.flatMap(p=>[one(p,'0-5cm'),one(p,'5-15cm')]));
   const L={};
-  ((j.properties&&j.properties.layers)||[]).forEach(l=>{
-    const f=(l.unit_measure&&l.unit_measure.d_factor)||1;
-    let s=0,w=0;   // 층 두께로 가중평균 (0-5cm: 5, 5-15cm: 10)
-    (l.depths||[]).forEach(dp=>{const v=dp.values&&dp.values.mean; if(v==null) return; const t=dp.label==='0-5cm'?5:10; s+=v/f*t; w+=t;});
-    if(w) L[l.name]=s/w;
-  });
+  props.forEach((p,k)=>{ const a=vals[2*k], b=vals[2*k+1];   // 층 두께 가중평균 (0-5cm: 5, 5-15cm: 10)
+    if(a!=null&&b!=null) L[p]=(a*5+b*10)/15; else if(a!=null||b!=null) L[p]=a??b; });
   if(L.phh2o==null&&L.soc==null&&L.clay==null) return null;   // 도심·수면 등 자료 없는 격자
   const out={};
   if(L.phh2o!=null) out.ph=+L.phh2o.toFixed(1);
@@ -1253,14 +1257,15 @@ async function _doAnalysis(address, coords){
     // ── 해외: SoilGrids 추정값 (pH·유기물·토성만 — 배수·토심·자갈은 자료 없음) ──
     if(!KR){
       soil.drainage='';   // 배수 자료 없음 (모의값 쓰지 않음)
+      soil.ph=null; soil.om=null; soil.soil_type='';   // 모의 토양값 지움 — SoilGrids 값만 사용
       const sg=await P.sg;
       if(sg){
         soil.sg=sg;
         if(sg.ph!=null) soil.ph=sg.ph;
         if(sg.om!=null) soil.om=sg.om;          // g/kg
         if(sg.texture) soil.soil_type=sg.texture;
-        dataLog.push({category:'토양 (SoilGrids)',icon:'🪨',api:'ISRIC SoilGrids 2.0 REST',
-          url:'https://rest.isric.org/soilgrids/v2.0/docs',note:'250m 격자 추정값 · 표토 0~15cm 두께 가중평균',
+        dataLog.push({category:'토양 (SoilGrids)',icon:'🪨',api:'ISRIC SoilGrids 2.0 (WMS 점 조회)',
+          url:'https://maps.isric.org/',note:'250m 격자 추정값 · 표토 0~15cm 두께 가중평균',
           values:`pH ${sg.ph??'—'} / 유기물 ${sg.om??'—'}g/kg / 토성 ${sg.texture||'—'}${sg.clay!=null?` (점토 ${sg.clay}% · 모래 ${sg.sand}% · 미사 ${sg.silt}%)`:''}`,
           status:'partial',verifyUrl:'https://soilgrids.org/',verifyLabel:'SoilGrids 지도'});
       }
@@ -3780,12 +3785,20 @@ function derivePlantHabitat(d){
   const chemK = soil?.soilChemSource ? (soil.soilChemBasis==='pnu' ? 'r' : 'e') : soil?.sg ? 'e' : 's';
   const chemT = soil?.soilChemSource ? (soil.soilChemBasis==='pnu' ? '농진청 토양검정 — 대상 필지' : '같은 법정동 농경지 검정 평균 — 대상지 값 아님') : soil?.sg ? SG_TIP : '자료 없음 — 임의값';
 
+  // 해외 + SoilGrids 값 없음 → 기본값 대신 '자료 없음'
+  const nod={label:'자료 없음', note:'SoilGrids 이 지점 값 없음 (도심 등)', color:'#546e7a', k:'', t:''};
+  if(d.overseas){
+    const g=soil?.sg||{};
+    if(!g.texture) var subX=nod;
+    if(g.om==null) var nutX=nod;
+    if(g.ph==null) var phX=nod;
+  }
   return {
     sun:   { label:sunLabel,   note:sunNote,   color:sunColor,   k:sunK,   t:sunK==='s'?'일사·일조 자료 없음 — 기본값':csK==='r'?'기상청 ASOS 관측소 평균':'ERA5 재분석 격자값' },
     moist: { label:moistLabel, note:moistNote, color:moistColor, k:moistK, t:moistK==='s'?'배수·강수 자료 없음 — 기본값':moistK==='r'?'흙토람 배수등급 + 기상청 강수':'일부 자료만 있음 또는 보정값' },
-    sub:   { label:subLabel,   note:rawType,   color:subColor,   k:soil?.realTexture?'r':soil?.sg?.texture?'e':'s', t:soil?.realTexture?'흙토람 필지 토양':soil?.sg?.texture?SG_TIP:'자료 없음 — 임의 추정' },
-    nut:   { label:nutLabel,   note:nutNote,   color:nutColor,   k:chemK, t:chemT },
-    ph:    { label:`${ph} (${phLabel})`, note:`pH ${ph}`, color:phColor, k:chemK, t:chemT },
+    sub:   typeof subX!=='undefined'?subX:{ label:subLabel,   note:rawType,   color:subColor,   k:soil?.realTexture?'r':soil?.sg?.texture?'e':'s', t:soil?.realTexture?'흙토람 필지 토양':soil?.sg?.texture?SG_TIP:'자료 없음 — 임의 추정' },
+    nut:   typeof nutX!=='undefined'?nutX:{ label:nutLabel,   note:nutNote,   color:nutColor,   k:chemK, t:chemT },
+    ph:    typeof phX!=='undefined'?phX:{ label:`${ph} (${phLabel})`, note:`pH ${ph}`, color:phColor, k:chemK, t:chemT },
     reliability,
   };
 }
@@ -4039,7 +4052,7 @@ function renderResults(d){
         ${(air.pm25!=null||air.noiseReal!=null)?`<hr style="border:none;border-top:1px solid #1e3a4f;margin:8px 0"><div style="font-size:10px;font-weight:700;color:#546e7a;margin-bottom:5px;letter-spacing:.06em">── 대기질 · 소음 ──</div>`:''}
         ${air.pm25!=null?`<div class="data-row"><span class="data-key">PM2.5</span><span class="data-val">${air.pm25}㎍/㎥ ${badge(air.pm25g,air.pm25>35?'red':air.pm25>15?'yellow':'green')}${V('r',air.station?('측정소 '+air.station):'대기질 측정소')}</span></div>`:''}
         ${air.noiseReal!=null?`<div class="data-row"><span class="data-key">소음</span><span class="data-val">${air.noiseReal}dB ${badge(air.noiseRealg,air.noiseReal>70?'red':air.noiseReal>60?'yellow':'green')}${V('r',air.noiseStation||'소음측정망')}</span></div>`:''}
-        <div class="source-row">${urb.reliability==='real'?'● 실제 데이터':'⬡ 시뮬레이션'} · ${urb.source}</div>
+        <div class="source-row">${!KR?'OpenStreetMap (용도지역·버스·보행량 자료는 국내 전용)':(urb.reliability==='real'?'● 실제 데이터':'⬡ 시뮬레이션')+' · '+urb.source}</div>
       </div>
 
       <div class="tab-content" id="tab-veg" data-title="🌳 식생">
@@ -4121,7 +4134,7 @@ function renderResults(d){
         ${!KR?KO:soc.reliability==='none'
           ? `<span style="font-size:10px;color:#546e7a">⬡ 배후 인구·보행량 데이터 미연동 → SGIS 연결 후 활성화</span>`
           : soc.progs.map(p=>`<span class="program-chip">${p}</span>`).join('')}
-        <div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>
+        ${KR?`<div class="source-row">${soc.reliability==='real'?'● 실제 데이터':'⬡'} ${soc.source}</div>`:''}
       </div>
 
       <div class="tab-content" id="tab-perf" data-title="📊 성능·데이터">
@@ -4237,7 +4250,7 @@ async function downloadPDF(){
     const d=analysisResult;
     const {weather:wx,ecology:eco,soil,air,urban:urb,traffic:trf,social:soc,water:water,landscape:lsc,analysis:an,performance:pf,designCond:dc,siteType:st,regulation:reg,spatialStrat:ss,dbTags:dbt,hardiness:hz,envGrade:evg,elev,osm:osmD,climateSummary:cs,winterBirds:wb,nihHardiness:nih}=d;
     const OV=!!d.overseas, ko=v=>OV?'국내 전용':v;   // 해외 대상지: 국내 전용 자료 칸
-    const sgv=(v,ok)=>OV?(ok?v+' (SoilGrids 추정)':'국내 전용'):v;
+    const sgv=(v,ok)=>OV?(ok?v+' (SoilGrids 추정)':'자료 없음'):v;
     const now=new Date();
     const ts=`${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
 
